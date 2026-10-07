@@ -22,6 +22,13 @@ window.MM = {
     return !!state.display.reveal[this.revealKey(contestId, pid)];
   },
 
+  // Настоящее место участника по сумме — без оглядки на то, что уже открыто.
+  placeOf(state, pid) {
+    const totals = state.participants.filter((p) => !p.hidden).map((p) => this.total(state, p.id));
+    const mine = this.total(state, pid);
+    return totals.filter((v) => v > mine).length + 1;
+  },
+
   // Порядок строк на экране: раскрытые — по убыванию баллов,
   // нераскрытые уходят вниз в порядке регистрации (чтобы не выдать результат заранее).
   ordered(state, contestId) {

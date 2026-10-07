@@ -132,7 +132,39 @@ ok('открываются все', Object.keys(st.display.reveal).length === 3)
 ok('режим «Победитель» ставится', st.display.mode === 'winner', st.display.mode);
 ok('победитель выбран автоматически', st.display.spotlightId === st.participants[1].id, 'Борис Ким ждали');
 
-// 6. за весь прогон страница не выбросила ошибок
+// 6. начисление баллов на портрете участника
+await evaluate(`[...document.querySelectorAll('#modes .btn')].find(b => b.textContent === 'Один участник').click()`);
+await sleep(300);
+await evaluate(`(() => { const s = document.querySelector('#mode-person');
+  s.value = [...s.options].find(o => o.textContent === 'Анна Зорина').value;
+  s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('счётчик виден в режиме портрета', await evaluate(`!document.querySelector('#count-box').hidden`));
+ok('смена участника сбрасывает счёт', st.display.count.runId === 0);
+
+await evaluate(`document.querySelector('#count-run').click()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('кнопка запускает начисление', st.display.count.runId === 1, `runId=${st.display.count.runId}`);
+
+await evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('пробел повторяет начисление', st.display.count.runId === 2, `runId=${st.display.count.runId}`);
+
+await evaluate(`(() => { const s = document.querySelector('#count-source');
+  s.value = [...s.options][1].value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('смена источника баллов сбрасывает счёт', st.display.count.runId === 0 && st.display.count.source !== 'total');
+
+await evaluate(`document.querySelector('#count-reset').click()`);
+await sleep(250);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('кнопка «вернуть на 0» работает', st.display.count.runId === 0);
+
+// 7. за весь прогон страница не выбросила ошибок
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));

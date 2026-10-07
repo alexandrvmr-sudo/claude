@@ -60,26 +60,27 @@ function playRects() {
   });
 }
 
-// Подгоняем список под высоту экрана: уменьшаем базовый кегль блока,
-// пока все участники не поместятся без прокрутки.
-function fitRows() {
-  const wrap = stage.querySelector('.rows');
+// Подгоняем содержимое под высоту экрана: уменьшаем базовый кегль блока,
+// пока всё не поместится без обрезки. Работает и для списка, и для портрета —
+// внутри обоих размеры заданы в em, поэтому высота масштабируется линейно.
+function fitBlock() {
+  const wrap = stage.querySelector('.rows, .solo');
   if (!wrap) return;
   const base = parseFloat(getComputedStyle(document.documentElement).fontSize);
   wrap.style.fontSize = `${base}px`;
 
-  // своя высота контента: сумма строк и промежутков (scrollHeight врёт при центрировании)
-  const measure = () => {
-    const kids = [...wrap.children];
-    if (!kids.length) return 0;
-    const gap = parseFloat(getComputedStyle(wrap).rowGap) || 0;
-    return kids.reduce((sum, n) => sum + n.offsetHeight, 0) + gap * (kids.length - 1);
-  };
+  const kids = [...wrap.children];
+  if (!kids.length) return;
+  const style = getComputedStyle(wrap);
+  const gap = parseFloat(style.rowGap) || 0;
+  // считаем сами: scrollHeight врёт, когда содержимое центрировано и вылезает вверх
+  const need = kids.reduce((sum, n) => {
+    const m = getComputedStyle(n);
+    return sum + n.offsetHeight + (parseFloat(m.marginTop) || 0) + (parseFloat(m.marginBottom) || 0);
+  }, 0) + gap * (kids.length - 1);
+  const avail = wrap.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
 
-  const avail = wrap.clientHeight;
-  const need = measure();
   if (need > avail && avail > 0) {
-    // все размеры строк заданы в em, поэтому высота масштабируется линейно
     wrap.style.fontSize = `${Math.max(6, base * (avail / need) - 0.5)}px`;
   }
 }
@@ -127,48 +128,110 @@ function rowsView(contestId) {
   return wrap;
 }
 
-function soloView(p, { winner = false } = {}) {
-  const box = el('div', 'solo');
-  const frame = el('div', 'portrait-wrap');
-  frame.style.position = 'relative';
-  const img = avatar(p, 'portrait');
-  frame.appendChild(img);
-  if (winner) frame.appendChild(el('div', 'crown', '♛'));
+// --- счётчик баллов ---
+// Экран сам крутит число от нуля: пульт только присылает новый номер запуска (runId).
+const counter = { runId: null, raf: 0, el: null, label: null, value: 0, done: false, info: null };
 
-  const info = el('div', 'solo-info');
-  info.appendChild(el('div', 'solo-name', p.name || 'Без имени'));
-  if (p.note) info.appendChild(el('div', 'solo-note', p.note));
+function formatValue(v, target) {
+  const decimals = (String(target).split('.')[1] || '').length;
+  return decimals ? v.toFixed(decimals) : String(Math.round(v));
+}
 
-  const items = MM.ordered(state, null);
-  const me = items.find((i) => i.p.id === p.id);
-  const revealed = me ? me.revealed : false;
-
-  const total = el('div', 'solo-total');
-  total.appendChild(el('b', null, revealed ? String(MM.total(state, p.id)) : '?'));
-  total.appendChild(el('span', null, revealed && me.place ? `баллов · ${me.place} место` : 'баллов'));
-  info.appendChild(total);
-
-  // разбивка по конкурсам — показываем только открытые оценки.
-  // Длину полосок меряем от лучшей оценки за один конкурс, иначе они все выглядят короткими.
-  const allScores = state.participants.flatMap((q) => state.contests.map((c) => MM.score(state, q.id, c.id) || 0));
-  const max = Math.max(1, ...allScores);
-  const bd = el('div', 'breakdown');
-  for (const c of state.contests) {
-    const v = MM.score(state, p.id, c.id);
-    const shown = MM.isRevealed(state, c.id, p.id) || revealed;
-    const line = el('div', 'bd-row');
-    line.appendChild(el('div', 'bd-name', c.name));
-    const bar = el('div', 'bd-bar');
-    const fill = el('div', 'bd-fill');
-    fill.style.width = shown && v !== null ? `${Math.max(2, (v / max) * 100)}%` : '0%';
-    bar.appendChild(fill);
-    line.appendChild(bar);
-    line.appendChild(el('div', 'bd-val', shown && v !== null ? String(v) : '—'));
-    bd.appendChild(line);
+function paintCounter() {
+  if (!counter.el || !counter.info) return;
+  counter.el.textContent = formatValue(counter.value, counter.info.target);
+  if (!counter.label) return;
+  const parts = [counter.info.contest ? counter.info.contest.name : 'баллов'];
+  if (counter.done && state.display.showPlaces && !counter.info.contest) {
+    parts.push(`${MM.placeOf(state, counter.info.pid)} место`);
   }
-  if (state.contests.length) info.appendChild(bd);
+  counter.label.textContent = parts.join(' · ');
+}
 
-  box.append(frame, info);
+function startCounter(numEl, labelEl, opts) {
+  // перерисовка сцены создаёт новые узлы — просто переподключаем к ним текущий счёт
+  counter.el = numEl;
+  counter.label = labelEl;
+  counter.info = opts;
+
+  const sameRun = counter.runId === opts.runId;
+  if (sameRun) {
+    if (counter.done) numEl.classList.add('done');
+    paintCounter();
+    return;
+  }
+
+  cancelAnimationFrame(counter.raf);
+  counter.runId = opts.runId;
+  counter.value = 0;
+  counter.done = opts.runId === 0;
+  if (counter.done) { // сброшено на ноль
+    paintCounter();
+    return;
+  }
+
+  const started = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - started) / Math.max(200, counter.info.duration));
+    // замедление к финалу — главный эффект: последние баллы «докапывают» медленно
+    counter.value = counter.info.target * (1 - (1 - t) ** 3);
+    if (t < 1) {
+      paintCounter();
+      counter.raf = requestAnimationFrame(step);
+    } else {
+      counter.value = counter.info.target;
+      counter.done = true;
+      if (counter.el) counter.el.classList.add('done');
+      paintCounter();
+    }
+  };
+  counter.raf = requestAnimationFrame(step);
+}
+
+function soloView(p, { winner = false } = {}) {
+  const d = state.display;
+  const c = d.count || { source: 'total', runId: 0, duration: 3000, showBreakdown: false };
+  const box = el('div', `solo${winner ? ' is-winner' : ''}`);
+
+  const frame = el('div', 'portrait-wrap');
+  frame.appendChild(avatar(p, 'portrait'));
+  if (winner) frame.appendChild(el('div', 'crown', '♛'));
+  box.appendChild(frame);
+
+  box.appendChild(el('div', 'solo-name', p.name || 'Без имени'));
+  if (p.note) box.appendChild(el('div', 'solo-note', p.note));
+
+  const contest = c.source && c.source !== 'total'
+    ? state.contests.find((x) => x.id === c.source)
+    : null;
+  const target = contest ? (MM.score(state, p.id, contest.id) ?? 0) : MM.total(state, p.id);
+
+  const counterBox = el('div', 'counter-box');
+  const num = el('div', 'counter', '0');
+  const label = el('div', 'counter-label');
+  counterBox.append(num, label);
+  box.appendChild(counterBox);
+  startCounter(num, label, { runId: c.runId || 0, target, duration: c.duration || 3000, contest, pid: p.id });
+
+  // разбивка по конкурсам — по желанию ведущего, иначе на экране только портрет и число
+  if (c.showBreakdown && state.contests.length) {
+    const allScores = state.participants.flatMap((q) => state.contests.map((x) => MM.score(state, q.id, x.id) || 0));
+    const max = Math.max(1, ...allScores);
+    const bd = el('div', 'breakdown');
+    for (const x of state.contests) {
+      const v = MM.score(state, p.id, x.id);
+      const line = el('div', 'bd-row');
+      line.appendChild(el('div', 'bd-name', x.name));
+      const bar = el('div', 'bd-bar');
+      const fill = el('div', 'bd-fill');
+      fill.style.width = v === null ? '0%' : `${Math.max(2, (v / max) * 100)}%`;
+      bar.appendChild(fill);
+      line.append(bar, el('div', 'bd-val', v === null ? '—' : String(v)));
+      bd.appendChild(line);
+    }
+    box.appendChild(bd);
+  }
+
   return box;
 }
 
@@ -213,7 +276,7 @@ function render() {
     }
   }
 
-  fitRows();
+  fitBlock();
   playRects();
 
   prevReveal = { ...d.reveal };

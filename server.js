@@ -52,6 +52,13 @@ function defaultState() {
       reveal: {}, // ключ 'total:<pid>' или '<contestId>:<pid>' -> true
       showPlaces: true,
       message: '',
+      // режим «объявление результата»: баллы накручиваются от нуля
+      count: {
+        source: 'total', // 'total' или id конкурса
+        runId: 0, // каждое нажатие «Начислить» увеличивает номер — экран запускает анимацию
+        duration: 3000,
+        showBreakdown: false,
+      },
     },
   };
 }
@@ -67,7 +74,9 @@ async function loadState() {
     const raw = await fsp.readFile(STATE_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     state = { ...defaultState(), ...parsed };
-    state.display = { ...defaultState().display, ...(parsed.display || {}) };
+    const base = defaultState();
+    state.display = { ...base.display, ...(parsed.display || {}) };
+    state.display.count = { ...base.display.count, ...(parsed.display?.count || {}) };
     console.log('Состояние загружено из data/state.json');
   } catch {
     console.log('Создаю новое состояние');

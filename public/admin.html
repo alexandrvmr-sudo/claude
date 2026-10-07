@@ -44,20 +44,46 @@
           <select id="mode-person"></select>
         </div>
 
+        <div class="count-box" id="count-box" hidden>
+          <div class="two">
+            <div class="field">
+              <label>Что начисляем</label>
+              <select id="count-source"></select>
+            </div>
+            <div class="field">
+              <label>Как долго крутятся баллы</label>
+              <select id="count-duration">
+                <option value="1500">Быстро — 1,5 с</option>
+                <option value="3000">Обычно — 3 с</option>
+                <option value="5000">Долго — 5 с</option>
+                <option value="8000">Очень долго — 8 с</option>
+              </select>
+            </div>
+          </div>
+          <label class="check"><input id="count-breakdown" type="checkbox"> Показывать разбивку по конкурсам</label>
+          <div class="reveal-actions">
+            <button id="count-run" class="btn btn-gold big">Начислить баллы <kbd>пробел</kbd></button>
+            <button id="count-reset" class="btn">Вернуть на 0</button>
+          </div>
+          <p class="hint" id="count-hint">—</p>
+        </div>
+
         <div class="field">
           <label>Подпись внизу экрана (необязательно)</label>
           <input id="message" type="text" placeholder="Например: Голосование жюри">
         </div>
         <label class="check"><input id="show-places" type="checkbox"> Показывать номера мест</label>
 
-        <h2 class="mt">Открытие баллов</h2>
-        <p class="hint" id="reveal-context">—</p>
-        <div class="reveal-actions">
-          <button id="reveal-next" class="btn btn-gold big">Открыть следующего <kbd>пробел</kbd></button>
-          <button id="reveal-all" class="btn">Открыть всех</button>
-          <button id="reveal-none" class="btn">Скрыть всех</button>
+        <div id="reveal-box">
+          <h2 class="mt">Открытие баллов</h2>
+          <p class="hint" id="reveal-context">—</p>
+          <div class="reveal-actions">
+            <button id="reveal-next" class="btn btn-gold big">Открыть следующего <kbd>пробел</kbd></button>
+            <button id="reveal-all" class="btn">Открыть всех</button>
+            <button id="reveal-none" class="btn">Скрыть всех</button>
+          </div>
+          <div class="reveal-list" id="reveal-list"></div>
         </div>
-        <div class="reveal-list" id="reveal-list"></div>
       </div>
 
       <div class="col">

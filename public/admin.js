@@ -72,6 +72,7 @@ function renderModes() {
       if (m.id === 'contest' && !state.display.contestId && state.contests[0]) {
         state.display.contestId = state.contests[0].id;
       }
+      if (m.id === 'spotlight' || m.id === 'winner') count().runId = 0;
       if ((m.id === 'spotlight' || m.id === 'winner') && !state.display.spotlightId) {
         // по умолчанию — лидер по сумме
         const best = [...state.participants].sort((a, b2) => MM.total(state, b2.id) - MM.total(state, a.id))[0];
@@ -82,8 +83,11 @@ function renderModes() {
     host.appendChild(b);
   }
 
+  const solo = state.display.mode === 'spotlight' || state.display.mode === 'winner';
   $('#contest-picker').hidden = state.display.mode !== 'contest';
-  $('#person-picker').hidden = !(state.display.mode === 'spotlight' || state.display.mode === 'winner');
+  $('#person-picker').hidden = !solo;
+  $('#count-box').hidden = !solo;
+  $('#reveal-box').hidden = solo; // в режиме одного участника баллы начисляются счётчиком
 
   const cs = $('#mode-contest');
   cs.innerHTML = '';
@@ -102,10 +106,69 @@ function renderModes() {
     if (p.id === state.display.spotlightId) o.selected = true;
     ps.appendChild(o);
   }
+
+  renderCount();
 }
 
+// --- начисление баллов на крупном портрете ---
+function count() {
+  state.display.count = state.display.count || { source: 'total', runId: 0, duration: 3000, showBreakdown: false };
+  return state.display.count;
+}
+
+function renderCount() {
+  const c = count();
+  const src = $('#count-source');
+  src.innerHTML = '';
+  const total = el('option', null, 'Общую сумму баллов');
+  total.value = 'total';
+  src.appendChild(total);
+  for (const x of state.contests) {
+    const o = el('option', null, `Баллы за «${x.name}»`);
+    o.value = x.id;
+    src.appendChild(o);
+  }
+  src.value = state.contests.some((x) => x.id === c.source) ? c.source : 'total';
+
+  $('#count-duration').value = String(c.duration || 3000);
+  $('#count-breakdown').checked = !!c.showBreakdown;
+
+  const p = state.participants.find((x) => x.id === state.display.spotlightId);
+  const contest = state.contests.find((x) => x.id === c.source);
+  const target = p ? (contest ? (MM.score(state, p.id, contest.id) ?? 0) : MM.total(state, p.id)) : null;
+  $('#count-hint').textContent = p
+    ? (c.runId
+      ? `На экране ${p.name}: баллы накручены до ${target}. «Вернуть на 0» — и можно объявлять заново.`
+      : `На экране ${p.name}, счётчик на нуле. Нажмите «Начислить баллы» — число доедет до ${target}.`)
+    : 'Выберите участника.';
+  $('#count-run').textContent = c.runId ? 'Начислить заново' : 'Начислить баллы';
+  const hint = el('kbd', null, 'пробел');
+  $('#count-run').appendChild(document.createTextNode(' '));
+  $('#count-run').appendChild(hint);
+}
+
+$('#count-source').addEventListener('change', (e) => {
+  count().source = e.target.value;
+  count().runId = 0; // другая цифра — начинаем с нуля
+  push();
+});
+$('#count-duration').addEventListener('change', (e) => { count().duration = Number(e.target.value); push(); });
+$('#count-breakdown').addEventListener('change', (e) => { count().showBreakdown = e.target.checked; push(); });
+
+function runCount() {
+  if (!state.display.spotlightId) return;
+  count().runId = (count().runId || 0) + 1; // новый номер запуска — экран крутит счётчик заново
+  push();
+}
+$('#count-run').addEventListener('click', runCount);
+$('#count-reset').addEventListener('click', () => { count().runId = 0; push(); });
+
 $('#mode-contest').addEventListener('change', (e) => { state.display.contestId = e.target.value; push(); });
-$('#mode-person').addEventListener('change', (e) => { state.display.spotlightId = e.target.value; push(); });
+$('#mode-person').addEventListener('change', (e) => {
+  state.display.spotlightId = e.target.value;
+  count().runId = 0; // следующий участник начинает с нуля
+  push();
+});
 $('#message').addEventListener('input', (e) => { state.display.message = e.target.value; push(); });
 $('#show-places').addEventListener('change', (e) => { state.display.showPlaces = e.target.checked; push(); });
 
@@ -193,7 +256,9 @@ addEventListener('keydown', (e) => {
   const typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
   if (e.code === 'Space' && !typing) {
     e.preventDefault();
-    revealNext();
+    const solo = state.display.mode === 'spotlight' || state.display.mode === 'winner';
+    if (solo) runCount();
+    else revealNext();
   }
 });
 
@@ -304,6 +369,7 @@ function renderPeople() {
     show.addEventListener('click', () => {
       state.display.mode = 'spotlight';
       state.display.spotlightId = p.id;
+      count().runId = 0;
       push();
     });
     const out = el('button', 'btn small', p.out ? 'Вернуть в игру' : 'Выбыл');

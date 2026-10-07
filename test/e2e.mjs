@@ -164,7 +164,30 @@ await sleep(250);
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('кнопка «вернуть на 0» работает', st.display.count.runId === 0);
 
-// 7. за весь прогон страница не выбросила ошибок
+// 7. управление звуком
+await evaluate(`document.querySelector('.tab[data-tab="settings"]').click()`);
+await sleep(200);
+await evaluate(`(() => { const i = document.querySelector('#sound-volume');
+  i.value = '40'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('громкость доходит до экрана', Math.abs(st.display.sound.volume - 0.4) < 0.01, String(st.display.sound.volume));
+
+await evaluate(`document.querySelector('#sound-test').click()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('кнопка проверки звука шлёт сигнал', st.display.sound.testId === 1, `testId=${st.display.sound.testId}`);
+
+await evaluate(`document.querySelector('#mute-toggle').click()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('быстрое выключение звука работает', st.display.sound.on === false);
+await evaluate(`document.querySelector('#mute-toggle').click()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('и обратное включение тоже', st.display.sound.on === true);
+
+// 8. за весь прогон страница не выбросила ошибок
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));

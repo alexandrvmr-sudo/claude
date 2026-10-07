@@ -52,6 +52,12 @@ function defaultState() {
       reveal: {}, // ключ 'total:<pid>' или '<contestId>:<pid>' -> true
       showPlaces: true,
       message: '',
+      sound: {
+        on: true,
+        volume: 0.7,
+        ambient: false, // тихий гул зеркала в режиме ожидания
+        testId: 0, // пульт увеличивает — экран проигрывает пробный звук
+      },
       // режим «объявление результата»: баллы накручиваются от нуля
       count: {
         source: 'total', // 'total' или id конкурса
@@ -77,6 +83,7 @@ async function loadState() {
     const base = defaultState();
     state.display = { ...base.display, ...(parsed.display || {}) };
     state.display.count = { ...base.display.count, ...(parsed.display?.count || {}) };
+    state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
     console.log('Состояние загружено из data/state.json');
   } catch {
     console.log('Создаю новое состояние');

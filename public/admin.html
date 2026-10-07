@@ -14,6 +14,7 @@
   </div>
   <div class="top-actions">
     <button id="open-display" class="btn btn-gold">Открыть экран зеркала</button>
+    <button id="mute-toggle" class="btn" title="Звук на телевизоре">Звук вкл.</button>
     <button id="export" class="btn">Сохранить файл</button>
     <label class="btn">Загрузить файл<input id="import" type="file" accept="application/json" hidden></label>
   </div>
@@ -88,7 +89,7 @@
 
       <div class="col">
         <h2>Предпросмотр</h2>
-        <div class="preview"><iframe id="preview" src="display.html" title="Предпросмотр экрана"></iframe></div>
+        <div class="preview"><iframe id="preview" src="display.html?preview=1" title="Предпросмотр экрана"></iframe></div>
         <p class="hint">Это уменьшенная копия того, что видят гости.</p>
       </div>
     </div>
@@ -129,6 +130,18 @@
     <h2>Оформление</h2>
     <div class="field"><label>Заголовок</label><input id="set-title" type="text"></div>
     <div class="field"><label>Подзаголовок</label><input id="set-subtitle" type="text"></div>
+
+    <h2 class="mt">Звук</h2>
+    <p class="hint">Звук идёт из окна зеркала — то есть из телевизора по HDMI.
+      Браузер включит его только после первого нажатия клавиши в этом окне:
+      нажмите в нём <b>F</b> для полного экрана, и звук разблокируется.</p>
+    <label class="check"><input id="sound-on" type="checkbox"> Звуки включены</label>
+    <div class="field" style="max-width: 24rem; margin-top: 0.7rem;">
+      <label>Громкость: <span id="sound-volume-value">70%</span></label>
+      <input id="sound-volume" type="range" min="0" max="100" step="5">
+    </div>
+    <label class="check"><input id="sound-ambient" type="checkbox"> Тихий гул зеркала в режиме ожидания</label>
+    <button id="sound-test" class="btn" style="margin-top: 0.8rem;">Проверить звук на телевизоре</button>
     <h2 class="mt">Опасная зона</h2>
     <button id="clear-scores" class="btn">Обнулить все баллы</button>
     <button id="reset-all" class="btn btn-danger">Стереть всё и начать заново</button>

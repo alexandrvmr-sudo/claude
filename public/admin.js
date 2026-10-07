@@ -510,6 +510,36 @@ function renderTotalsOnly() {
   }
 }
 
+// --- звук ---
+function soundCfg() {
+  state.display.sound = state.display.sound || { on: true, volume: 0.7, ambient: false, testId: 0 };
+  return state.display.sound;
+}
+
+function renderSound() {
+  const snd = soundCfg();
+  $('#sound-on').checked = snd.on !== false;
+  $('#sound-volume').value = String(Math.round((snd.volume ?? 0.7) * 100));
+  $('#sound-volume-value').textContent = `${Math.round((snd.volume ?? 0.7) * 100)}%`;
+  $('#sound-ambient').checked = !!snd.ambient;
+  const btn = $('#mute-toggle');
+  btn.textContent = snd.on !== false ? 'Звук вкл.' : 'Звук выкл.';
+  btn.classList.toggle('is-off', snd.on === false);
+}
+
+$('#sound-on').addEventListener('change', (e) => { soundCfg().on = e.target.checked; push(); });
+$('#mute-toggle').addEventListener('click', () => { soundCfg().on = soundCfg().on === false; push(); });
+$('#sound-ambient').addEventListener('change', (e) => { soundCfg().ambient = e.target.checked; push(); });
+$('#sound-volume').addEventListener('input', (e) => {
+  soundCfg().volume = Number(e.target.value) / 100;
+  $('#sound-volume-value').textContent = `${e.target.value}%`;
+  pushQuiet(); // ползунок двигают часто — не перерисовываем пульт на каждый шаг
+});
+$('#sound-test').addEventListener('click', () => {
+  soundCfg().testId = (soundCfg().testId || 0) + 1;
+  push();
+});
+
 // --- настройки ---
 $('#set-title').addEventListener('change', (e) => { state.settings.title = e.target.value; push(); });
 $('#set-subtitle').addEventListener('change', (e) => { state.settings.subtitle = e.target.value; push(); });
@@ -565,6 +595,7 @@ function render() {
   $('#show-places').checked = !!state.display.showPlaces;
   $('#set-title').value = state.settings.title || '';
   $('#set-subtitle').value = state.settings.subtitle || '';
+  renderSound();
   fitPreview();
 }
 

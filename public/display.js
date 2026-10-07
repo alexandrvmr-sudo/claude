@@ -6,6 +6,12 @@ const offline = document.getElementById('offline');
 let state = null;
 let prevReveal = {}; // чтобы подсветить только что открытые баллы
 let prevRects = new Map(); // FLIP: позиции строк до перерисовки
+let firstRender = true; // на первой отрисовке звуки не играем
+let prevMode = null;
+let prevTestId = 0;
+let newlyRevealed = 0;
+const unmute = document.getElementById('unmute');
+const PREVIEW = new URLSearchParams(location.search).has('preview'); // окно предпросмотра на пульте — без звука
 
 // искры на фоне
 (function sparks() {
@@ -73,11 +79,15 @@ function fitBlock() {
   if (!kids.length) return;
   const style = getComputedStyle(wrap);
   const gap = parseFloat(style.rowGap) || 0;
+  const row = style.flexDirection.startsWith('row');
   // считаем сами: scrollHeight врёт, когда содержимое центрировано и вылезает вверх
-  const need = kids.reduce((sum, n) => {
+  const heights = kids.map((n) => {
     const m = getComputedStyle(n);
-    return sum + n.offsetHeight + (parseFloat(m.marginTop) || 0) + (parseFloat(m.marginBottom) || 0);
-  }, 0) + gap * (kids.length - 1);
+    return n.offsetHeight + (parseFloat(m.marginTop) || 0) + (parseFloat(m.marginBottom) || 0);
+  });
+  const need = row
+    ? Math.max(...heights) // колонки стоят рядом — важна самая высокая
+    : heights.reduce((a, b) => a + b, 0) + gap * (kids.length - 1);
   const avail = wrap.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
 
   if (need > avail && avail > 0) {
@@ -116,7 +126,10 @@ function rowsView(contestId) {
     if (revealed) {
       scoreEl.textContent = value === null ? '—' : String(value);
       const key = MM.revealKey(contestId, p.id);
-      if (!prevReveal[key]) scoreEl.classList.add('revealed'); // только что открыли
+      if (!prevReveal[key]) { // только что открыли
+        scoreEl.classList.add('revealed');
+        newlyRevealed += 1;
+      }
     } else {
       scoreEl.textContent = '?';
       scoreEl.classList.add('unknown');
@@ -130,7 +143,7 @@ function rowsView(contestId) {
 
 // --- счётчик баллов ---
 // Экран сам крутит число от нуля: пульт только присылает новый номер запуска (runId).
-const counter = { runId: null, raf: 0, el: null, label: null, value: 0, done: false, info: null };
+const counter = { runId: null, raf: 0, el: null, label: null, value: 0, done: false, info: null, ticks: null };
 
 function formatValue(v, target) {
   const decimals = (String(target).split('.')[1] || '').length;
@@ -162,6 +175,8 @@ function startCounter(numEl, labelEl, opts) {
   }
 
   cancelAnimationFrame(counter.raf);
+  if (counter.ticks) counter.ticks.cancel(); // старые щелчки уже расписаны — снимаем
+  counter.ticks = null;
   counter.runId = opts.runId;
   counter.value = 0;
   counter.done = opts.runId === 0;
@@ -171,6 +186,8 @@ function startCounter(numEl, labelEl, opts) {
   }
 
   const started = performance.now();
+  sound('whoosh');
+  counter.ticks = soundCountdown(counter.info.target, counter.info.duration);
   const step = (now) => {
     const t = Math.min(1, (now - started) / Math.max(200, counter.info.duration));
     // замедление к финалу — главный эффект: последние баллы «докапывают» медленно
@@ -183,6 +200,7 @@ function startCounter(numEl, labelEl, opts) {
       counter.done = true;
       if (counter.el) counter.el.classList.add('done');
       paintCounter();
+      sound('strike');
     }
   };
   counter.raf = requestAnimationFrame(step);
@@ -193,13 +211,15 @@ function soloView(p, { winner = false } = {}) {
   const c = d.count || { source: 'total', runId: 0, duration: 3000, showBreakdown: false };
   const box = el('div', `solo${winner ? ' is-winner' : ''}`);
 
+  // слева портрет, справа имя и баллы
   const frame = el('div', 'portrait-wrap');
   frame.appendChild(avatar(p, 'portrait'));
   if (winner) frame.appendChild(el('div', 'crown', '♛'));
-  box.appendChild(frame);
 
-  box.appendChild(el('div', 'solo-name', p.name || 'Без имени'));
-  if (p.note) box.appendChild(el('div', 'solo-note', p.note));
+  const info = el('div', 'solo-info');
+  info.appendChild(el('div', 'solo-name', p.name || 'Без имени'));
+  if (p.note) info.appendChild(el('div', 'solo-note', p.note));
+  box.append(frame, info);
 
   const contest = c.source && c.source !== 'total'
     ? state.contests.find((x) => x.id === c.source)
@@ -210,7 +230,7 @@ function soloView(p, { winner = false } = {}) {
   const num = el('div', 'counter', '0');
   const label = el('div', 'counter-label');
   counterBox.append(num, label);
-  box.appendChild(counterBox);
+  info.appendChild(counterBox);
   startCounter(num, label, { runId: c.runId || 0, target, duration: c.duration || 3000, contest, pid: p.id });
 
   // разбивка по конкурсам — по желанию ведущего, иначе на экране только портрет и число
@@ -229,7 +249,7 @@ function soloView(p, { winner = false } = {}) {
       line.append(bar, el('div', 'bd-val', v === null ? '—' : String(v)));
       bd.appendChild(line);
     }
-    box.appendChild(bd);
+    info.appendChild(bd);
   }
 
   return box;
@@ -241,6 +261,13 @@ function render() {
   document.getElementById('subtitle').textContent = state.settings.subtitle || '';
 
   const d = state.display;
+  if (!PREVIEW) MMSound.configure(d.sound);
+  newlyRevealed = 0;
+
+  // смена картинки на экране слышна: победителя встречаем фанфарами
+  if (!firstRender && d.mode !== prevMode) sound(d.mode === 'winner' ? 'fanfare' : 'whoosh');
+  if (!firstRender && (d.sound?.testId || 0) !== prevTestId) sound('strike');
+  if (!PREVIEW) MMSound.ambient(d.mode === 'standby' && d.sound?.ambient);
 
   // подпись внизу ставим до перерисовки сцены: она меняет высоту,
   // а список подгоняется под оставшееся место
@@ -279,7 +306,39 @@ function render() {
   fitBlock();
   playRects();
 
+  if (newlyRevealed) sound('reveal');
+  updateUnmuteHint();
+
   prevReveal = { ...d.reveal };
+  prevMode = d.mode;
+  prevTestId = d.sound?.testId || 0;
+  firstRender = false;
+}
+
+// --- звук ---
+// Браузер запрещает звук до первого действия пользователя: ловим любое
+// нажатие и показываем подсказку, пока звук не разрешён.
+function sound(name, arg) {
+  if (PREVIEW || firstRender) return;
+  MMSound.play(name, arg);
+}
+
+function soundCountdown(target, duration) {
+  if (PREVIEW || firstRender) return null;
+  return MMSound.countdown(target, duration);
+}
+
+function updateUnmuteHint() {
+  const want = !PREVIEW && state && state.display.sound && state.display.sound.on !== false;
+  unmute.hidden = !(want && !MMSound.ready());
+}
+
+for (const ev of ['keydown', 'pointerdown', 'click']) {
+  addEventListener(ev, () => {
+    if (PREVIEW) return;
+    MMSound.unlock();
+    updateUnmuteHint();
+  });
 }
 
 // --- связь с сервером ---

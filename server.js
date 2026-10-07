@@ -97,6 +97,14 @@ function scheduleSave() {
   saveTimer = setTimeout(() => saveState().catch(console.error), 300);
 }
 
+// Сохранение «прямо сейчас», без отложенной записи — для выхода по Ctrl+C
+function saveStateNow() {
+  clearTimeout(saveTimer);
+  const tmp = `${STATE_FILE}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
+  fs.renameSync(tmp, STATE_FILE);
+}
+
 async function saveState() {
   const tmp = `${STATE_FILE}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(state, null, 2), 'utf8');
@@ -246,6 +254,18 @@ const server = http.createServer(async (req, res) => {
 
 await fsp.mkdir(PHOTO_DIR, { recursive: true });
 await loadState();
+
+// Терминал закрыли — дописываем последние правки, чтобы ничего не потерялось
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    try {
+      saveStateNow();
+    } catch (e) {
+      console.error('Не удалось сохранить состояние:', e.message);
+    }
+    process.exit(0);
+  });
+}
 
 server.listen(PORT, '0.0.0.0', () => {
   const nets = Object.values(os.networkInterfaces()).flat()

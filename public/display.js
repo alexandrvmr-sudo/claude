@@ -143,7 +143,7 @@ function rowsView(contestId) {
 
 // --- счётчик баллов ---
 // Экран сам крутит число от нуля: пульт только присылает новый номер запуска (runId).
-const counter = { runId: null, raf: 0, el: null, label: null, value: 0, done: false, info: null, ticks: null };
+const counter = { key: null, runId: 0, raf: 0, el: null, label: null, value: 0, done: false, info: null, ticks: null };
 
 function formatValue(v, target) {
   const decimals = (String(target).split('.')[1] || '').length;
@@ -167,8 +167,10 @@ function startCounter(numEl, labelEl, opts) {
   counter.label = labelEl;
   counter.info = opts;
 
-  const sameRun = counter.runId === opts.runId;
-  if (sameRun) {
+  // «тот же запуск» — это тот же номер И тот же участник И тот же источник баллов,
+  // иначе на экране осталась бы цифра предыдущего участника
+  const key = `${opts.runId}|${opts.pid}|${opts.contest ? opts.contest.id : 'total'}`;
+  if (counter.key === key) {
     if (counter.done) numEl.classList.add('done');
     paintCounter();
     return;
@@ -177,10 +179,15 @@ function startCounter(numEl, labelEl, opts) {
   cancelAnimationFrame(counter.raf);
   if (counter.ticks) counter.ticks.cancel(); // старые щелчки уже расписаны — снимаем
   counter.ticks = null;
+  const pressed = opts.runId !== 0 && opts.runId !== counter.runId; // ведущий нажал «Начислить»
+  counter.key = key;
   counter.runId = opts.runId;
   counter.value = 0;
-  counter.done = opts.runId === 0;
-  if (counter.done) { // сброшено на ноль
+  counter.done = false;
+
+  // Крутим только по нажатию. Если сменился участник, а номер запуска прежний,
+  // показываем ноль и ждём ведущего — иначе баллы откроются сами.
+  if (!pressed) {
     paintCounter();
     return;
   }

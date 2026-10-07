@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node test/e2e.mjs"
+    "test": "node test/e2e.mjs && node test/display.mjs"
   },
   "engines": {
     "node": ">=18"

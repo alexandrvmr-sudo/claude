@@ -130,7 +130,11 @@ function renderCount() {
   }
   src.value = state.contests.some((x) => x.id === c.source) ? c.source : 'total';
 
-  $('#count-duration').value = String(c.duration || 3000);
+  // если в состоянии оказалась длительность не из списка, показываем ближайшую
+  const durations = [...$('#count-duration').options].map((o) => Number(o.value));
+  const wanted = Number(c.duration) || 3000;
+  const nearest = durations.reduce((a, b) => (Math.abs(b - wanted) < Math.abs(a - wanted) ? b : a));
+  $('#count-duration').value = String(nearest);
   $('#count-breakdown').checked = !!c.showBreakdown;
 
   const p = state.participants.find((x) => x.id === state.display.spotlightId);

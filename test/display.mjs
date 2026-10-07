@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP_PORT = 7789;
 const APP = `http://localhost:${APP_PORT}`;
-const CDP_PORT = 9522;
+const CDP_PORT = 9500 + Math.floor(Math.random() * 400);
 const CHROME = process.env.CHROME || [
   '/opt/pw-browsers/chromium',
   '/usr/bin/chromium',
@@ -104,6 +104,19 @@ await evaluate(`window.__osc = 0;
 const checks = [];
 const ok = (name, cond, extra = '') => checks.push(`${cond ? 'OK  ' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
 
+// Ждём нужного состояния, а не фиксированной паузы: в headless кадры идут
+// неровно, и жёсткий sleep делал тест капризным.
+async function waitFor(expression, want, timeout = 10000) {
+  const until = Date.now() + timeout;
+  let last;
+  do {
+    last = await evaluate(expression);
+    if (last === want) return last;
+    await sleep(120);
+  } while (Date.now() < until);
+  return last;
+}
+
 // 1. двенадцать участников влезают в экран без обрезки
 const fit = await evaluate(`(() => {
   const wrap = document.querySelector('.rows');
@@ -122,25 +135,29 @@ ok('счётчик ждёт на нуле', (await evaluate(`document.querySelec
 // 3. запуск: число доезжает до суммы, место появляется после остановки
 await evaluate(`window.__osc = 0`);
 await post((st) => { st.display.count.runId = 1; });
-await sleep(2000);
 const total = base.contests.reduce((s, c) => s + base.scores.u0[c.id], 0);
-ok('счётчик доезжает до суммы', (await evaluate(`document.querySelector('.counter').textContent`)) === String(total), `ждали ${total}`);
-ok('после остановки видно место', (await evaluate(`document.querySelector('.counter-label').textContent`)).includes('место'));
-ok('щелчки и удар звучат', (await evaluate(`window.__osc`)) >= total, `генераторов ${await evaluate(`window.__osc`)}`);
+const reached = await waitFor(`document.querySelector('.counter').textContent`, String(total));
+ok('счётчик доезжает до суммы', reached === String(total), `на экране ${reached}, ждали ${total}`);
+const labelled = await waitFor(`document.querySelector('.counter-label').textContent.includes('место')`, true);
+ok('после остановки видно место', labelled === true);
+const osc = await evaluate(`window.__osc`);
+ok('щелчки и удар звучат', osc >= total, `генераторов ${osc}`);
 
 // 4. сменили участника, а «Начислить» не нажимали: на экране ноль, а не чужая цифра
 await post((st) => { st.display.spotlightId = 'u1'; }); // номер запуска прежний
-await sleep(900);
-const shown = await evaluate(`document.querySelector('.counter').textContent`);
-ok('новый участник начинает с нуля', shown === '0', `на экране ${shown}`);
+const shown = await waitFor(`document.querySelector('.counter').textContent`, '0', 4000);
+await sleep(600); // и дальше сам не поедет
+const still = await evaluate(`document.querySelector('.counter').textContent`);
+ok('новый участник начинает с нуля', shown === '0' && still === '0', `на экране ${still}`);
 
 // 5. перерисовка во время показа не сбивает результат
 const other = base.contests.reduce((s, c) => s + base.scores.u1[c.id], 0);
 await post((st) => { st.display.count.runId = 5; });
-await sleep(1800);
+await waitFor(`document.querySelector('.counter').textContent`, String(other));
 await post((st) => { st.display.message = 'Результат принят'; });
 await sleep(500);
-ok('перерисовка не сбивает счётчик', (await evaluate(`document.querySelector('.counter').textContent`)) === String(other), `ждали ${other}`);
+const afterRedraw = await evaluate(`document.querySelector('.counter').textContent`);
+ok('перерисовка не сбивает счётчик', afterRedraw === String(other), `на экране ${afterRedraw}, ждали ${other}`);
 
 // 6. выключенный звук действительно молчит
 await post((st) => { st.display.sound.on = false; st.display.count.runId = 6; });

@@ -3,3 +3,4 @@ data/state.json
 data/photos/*
 !data/photos/.gitkeep
 .DS_Store
+volshebnoe-zerkalo.zip

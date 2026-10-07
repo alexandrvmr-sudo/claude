@@ -11,6 +11,7 @@
 <header class="top">
   <div class="brand">
     <b>Волшебное зеркало</b>
+    <span id="brand-show" class="brand-show"></span>
     <span id="conn" class="conn">подключение…</span>
   </div>
   <div class="top-actions">
@@ -22,7 +23,8 @@
 </header>
 
 <nav class="tabs">
-  <button class="tab is-active" data-tab="show">Эфир</button>
+  <button class="tab is-active" data-tab="shows">Шоу</button>
+  <button class="tab" data-tab="show">Эфир</button>
   <button class="tab" data-tab="people">Участники</button>
   <button class="tab" data-tab="contests">Конкурсы</button>
   <button class="tab" data-tab="scores">Баллы</button>
@@ -30,8 +32,30 @@
 </nav>
 
 <main>
+  <!-- ШОУ -->
+  <section class="panel" data-panel="shows">
+    <h2>Текущее шоу</h2>
+    <div class="current-show">
+      <div class="current-show-name" id="current-show">—</div>
+      <div class="acts">
+        <button id="show-rename" class="btn small">Переименовать</button>
+        <button id="show-save-as" class="btn small">Сохранить как новое</button>
+      </div>
+    </div>
+    <p class="hint">Участники, конкурсы и баллы сохраняются в это шоу сами, отдельно нажимать ничего не нужно.</p>
+
+    <h2 class="mt">Подготовить новое</h2>
+    <form id="add-show" class="row-form">
+      <input name="name" type="text" placeholder="Название, например «Съёмка 12 мая»" required>
+      <button class="btn btn-gold" type="submit">Создать пустое шоу</button>
+    </form>
+
+    <h2 class="mt">Сохранённые шоу</h2>
+    <div class="shows" id="shows"></div>
+  </section>
+
   <!-- ЭФИР -->
-  <section class="panel" data-panel="show">
+  <section class="panel" data-panel="show" hidden>
     <div class="cols">
       <div class="col">
         <h2>Что показывает зеркало</h2>

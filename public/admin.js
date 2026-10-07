@@ -39,6 +39,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     document.querySelectorAll('.panel').forEach((p) => {
       p.hidden = p.dataset.panel !== tab.dataset.tab;
     });
+    if (tab.dataset.tab === 'shows') renderShows();
     fitPreview();
   });
 });
@@ -514,6 +515,107 @@ function renderTotalsOnly() {
   }
 }
 
+// --- библиотека шоу ---
+// Каждое шоу — это участники, конкурсы и баллы, подготовленные заранее.
+// Эфир (что сейчас на телевизоре) в шоу не хранится, он всегда начинается с нуля.
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const data = await res.json().catch(() => ({ ok: false, error: 'Сервер не ответил' }));
+  if (!data.ok) throw new Error(data.error || 'Не получилось');
+  return data;
+}
+
+async function renderShows() {
+  const host = $('#shows');
+  let data;
+  try {
+    data = await api('/api/shows');
+  } catch (e) {
+    host.innerHTML = '';
+    host.appendChild(el('p', 'hint', `Не удалось прочитать библиотеку: ${e.message}`));
+    return;
+  }
+
+  host.innerHTML = '';
+  if (!data.shows.length) {
+    host.appendChild(el('p', 'hint', 'Сохранённых шоу пока нет. Создайте первое — и всё, что внесёте, будет складываться в него.'));
+    return;
+  }
+
+  for (const show of data.shows) {
+    const row = el('div', 'show-row');
+    if (show.id === data.current) row.classList.add('is-current');
+
+    const left = el('div');
+    left.appendChild(el('div', 'nm', show.name));
+    const when = show.updatedAt ? new Date(show.updatedAt).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    left.appendChild(el('div', 'meta',
+      `${show.participants} участников · ${show.contests} конкурсов${when ? ' · изменено ' + when : ''}`));
+    row.appendChild(left);
+
+    row.appendChild(el('div', 'meta', show.id === data.current ? 'открыто' : ''));
+
+    const acts = el('div', 'acts');
+    if (show.id !== data.current) {
+      const open = el('button', 'btn small btn-gold', 'Открыть');
+      open.addEventListener('click', async () => {
+        if (!confirm(`Открыть «${show.name}»? Текущий эфир будет сброшен в режим ожидания.`)) return;
+        try {
+          await api(`/api/shows/${show.id}/open`, { method: 'POST' });
+          renderShows();
+        } catch (e) { alert(e.message); }
+      });
+      acts.appendChild(open);
+    }
+    const copy = el('button', 'btn small', 'Дублировать');
+    copy.addEventListener('click', async () => {
+      try { await api(`/api/shows/${show.id}/copy`, { method: 'POST' }); renderShows(); }
+      catch (e) { alert(e.message); }
+    });
+    const rename = el('button', 'btn small', 'Переименовать');
+    rename.addEventListener('click', async () => {
+      const name = prompt('Новое название шоу:', show.name);
+      if (!name) return;
+      try { await api(`/api/shows/${show.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); renderShows(); }
+      catch (e) { alert(e.message); }
+    });
+    const del = el('button', 'btn small btn-danger', 'Удалить');
+    del.addEventListener('click', async () => {
+      if (!confirm(`Удалить шоу «${show.name}»? Его участники и баллы пропадут.`)) return;
+      try { await api(`/api/shows/${show.id}`, { method: 'DELETE' }); renderShows(); }
+      catch (e) { alert(e.message); }
+    });
+    acts.append(copy, rename, del);
+    row.appendChild(acts);
+    host.appendChild(row);
+  }
+}
+
+$('#add-show').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = e.target.name.value.trim();
+  if (!name) return;
+  if (state.showId && !confirm(`Создать новое пустое шоу «${name}»? Текущее останется в библиотеке.`)) return;
+  e.target.reset();
+  try { await api('/api/shows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); renderShows(); }
+  catch (err) { alert(err.message); }
+});
+
+$('#show-save-as').addEventListener('click', async () => {
+  const name = prompt('Название нового шоу:', state.showName ? `${state.showName} — копия` : 'Моё шоу');
+  if (!name) return;
+  try { await api('/api/shows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, from: 'current' }) }); renderShows(); }
+  catch (e) { alert(e.message); }
+});
+
+$('#show-rename').addEventListener('click', async () => {
+  if (!state.showId) return alert('Сейчас не открыто ни одно шоу — создайте его ниже.');
+  const name = prompt('Новое название шоу:', state.showName);
+  if (!name) return;
+  try { await api(`/api/shows/${state.showId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); renderShows(); }
+  catch (e) { alert(e.message); }
+});
+
 // --- звук ---
 function soundCfg() {
   state.display.sound = state.display.sound || { on: true, volume: 0.7, ambient: false, testId: 0 };
@@ -560,8 +662,13 @@ $('#reset-all').addEventListener('click', async () => {
   await fetch('/api/reset', { method: 'POST' });
 });
 
+// В приложении окно зеркала открывает сам Electron — и сразу на телевизоре.
+// В браузере остаётся обычное всплывающее окно, которое перетаскивают руками.
+const inApp = !!(window.mirrorApp && window.mirrorApp.isApp);
+if (inApp) $('#open-display').textContent = 'Показать на телевизоре';
 $('#open-display').addEventListener('click', () => {
-  window.open('display.html', 'mirror', 'popup');
+  if (inApp) window.mirrorApp.openMirror();
+  else window.open('display.html', 'mirror', 'popup');
 });
 
 $('#export').addEventListener('click', () => {
@@ -600,6 +707,9 @@ function render() {
   $('#set-title').value = state.settings.title || '';
   $('#set-subtitle').value = state.settings.subtitle || '';
   renderSound();
+  const title = state.showName || 'шоу не выбрано';
+  $('#brand-show').textContent = title;
+  $('#current-show').textContent = title;
   fitPreview();
 }
 
@@ -610,8 +720,10 @@ function connect() {
     conn.className = 'conn ok';
     const incoming = JSON.parse(ev.data);
     if (incoming.rev === myRev) return; // наше же изменение вернулось — не трогаем поля
+    const firstTime = !state;
     state = incoming;
     render();
+    if (firstTime) renderShows();
   });
   es.onerror = () => {
     conn.textContent = 'нет связи';

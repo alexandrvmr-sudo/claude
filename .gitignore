@@ -2,5 +2,9 @@ node_modules/
 data/state.json
 data/photos/*
 !data/photos/.gitkeep
+data/shows/*
+!data/shows/.gitkeep
 .DS_Store
 volshebnoe-zerkalo.zip
+dist/
+package-lock.json

@@ -6,9 +6,16 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node test/e2e.mjs && node test/display.mjs"
+    "test": "node test/e2e.mjs && node test/display.mjs",
+    "app": "electron .",
+    "build:mac": "node desktop/build.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "main": "desktop/main.cjs",
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^33.4.11"
   }
 }

@@ -81,8 +81,25 @@ async function evaluate(expression) {
 
 await send('Runtime.enable'); // чтобы ловить ошибки на странице
 await sleep(1200);
+// окна подтверждения и ввода в тесте отвечаем сами
+await evaluate(`window.confirm = () => true;
+  window.__promptAnswer = '';
+  window.prompt = () => window.__promptAnswer; 'ok'`);
+
 const checks = [];
+let st;
 const ok = (name, cond, extra = '') => checks.push(`${cond ? 'OK  ' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
+
+// 0. библиотека шоу: создаём шоу, в него и пойдут участники
+await evaluate(`(() => { const f = document.querySelector('#add-show');
+  f.name.value = 'Съёмка 12 мая'; f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('шоу создаётся и открывается', st.showName === 'Съёмка 12 мая', st.showName);
+ok('название видно в шапке', (await evaluate(`document.querySelector('#brand-show').textContent`)) === 'Съёмка 12 мая');
+
+await evaluate(`document.querySelector('.tab[data-tab="people"]').click()`);
+await sleep(200);
 
 // 1. добавляем трёх участников через форму
 for (const [name, note] of [['Анна Зорина', 'Тверь'], ['Борис Ким', 'Омск'], ['Вера Лис', 'Пермь']]) {
@@ -91,7 +108,7 @@ for (const [name, note] of [['Анна Зорина', 'Тверь'], ['Бори�
     f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
   await sleep(250);
 }
-let st = await (await fetch(`${APP}/api/state`)).json();
+st = await (await fetch(`${APP}/api/state`)).json();
 ok('форма добавляет участников', st.participants.length === 3, `их ${st.participants.length}`);
 ok('подпись сохраняется', st.participants[0].note === 'Тверь');
 
@@ -163,6 +180,30 @@ await evaluate(`document.querySelector('#count-reset').click()`);
 await sleep(250);
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('кнопка «вернуть на 0» работает', st.display.count.runId === 0);
+
+// 6b. второе шоу и возврат к первому
+await evaluate(`document.querySelector('.tab[data-tab="shows"]').click()`);
+await sleep(300);
+await evaluate(`(() => { const f = document.querySelector('#add-show');
+  f.name.value = 'Финал'; f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('новое шоу начинается пустым', st.showName === 'Финал' && st.participants.length === 0,
+  `${st.showName}, участников ${st.participants.length}`);
+
+const shows = (await (await fetch(`${APP}/api/shows`)).json()).shows;
+const first = shows.find((x) => x.name === 'Съёмка 12 мая');
+ok('первое шоу сохранило участников', first && first.participants === 3, `участников ${first && first.participants}`);
+
+await evaluate(`[...document.querySelectorAll('#shows .show-row')]
+  .find(r => r.textContent.includes('Съёмка 12 мая'))
+  .querySelector('button').click()`);
+await sleep(700);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('шоу открывается обратно с участниками',
+  st.showName === 'Съёмка 12 мая' && st.participants.length === 3 && st.participants[0].name === 'Анна Зорина',
+  `${st.showName}, участников ${st.participants.length}`);
+ok('эфир при открытии сбрасывается', st.display.mode === 'standby' && Object.keys(st.display.reveal).length === 0);
 
 // 7. управление звуком
 await evaluate(`document.querySelector('.tab[data-tab="settings"]').click()`);

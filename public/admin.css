@@ -136,3 +136,25 @@ td.total { color: var(--accent); font-weight: 600; font-variant-numeric: tabular
 
 input[type=range] { width: 100%; accent-color: var(--accent); }
 #mute-toggle.is-off { color: var(--danger); border-color: #6d2a36; }
+
+.brand-show {
+  margin-left: 0.8rem;
+  font-family: var(--font-display);
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+.current-show {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.8rem 1rem;
+}
+.current-show-name { font-family: var(--font-display); font-weight: 300; font-size: 1.4rem; letter-spacing: 0.06em; }
+.shows { display: flex; flex-direction: column; gap: 0.5rem; max-width: 52rem; }
+.show-row {
+  display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 0.8rem;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.6rem 0.8rem;
+}
+.show-row.is-current { border-color: var(--accent); }
+.show-row .nm { font-family: var(--font-display); font-weight: 300; font-size: 1.15rem; letter-spacing: 0.04em; }
+.show-row .meta { color: var(--dim); font-size: 0.82rem; }
+.show-row .acts { display: flex; gap: 0.3rem; flex-wrap: wrap; }

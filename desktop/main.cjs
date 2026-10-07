@@ -251,21 +251,21 @@ async function selfTest() {
       }
     };
     await until(controlWindow, `!!document.querySelector('#shows')`);
-    const run = (code) => controlWindow.webContents.executeJavaScript(code, true);
 
     ok('пульт загрузился', controlWindow.webContents.getURL().includes('admin.html'));
-    ok('интерфейс отрисовался', await run(`!!document.querySelector('#shows')`));
-    ok('мостик приложения доступен', await run(`!!(window.mirrorApp && window.mirrorApp.isApp)`));
+    ok('интерфейс отрисовался', await ask(controlWindow, `!!document.querySelector('#shows')`));
+    ok('мостик приложения доступен', await ask(controlWindow, `!!(window.mirrorApp && window.mirrorApp.isApp)`));
     ok('кнопка подписана под приложение',
-      (await run(`document.querySelector('#open-display').textContent`)) === 'Показать на телевизоре');
-    ok('сервер внутри приложения отвечает', await run(`fetch('/api/shows').then(r => r.json()).then(d => d.ok)`));
+      (await ask(controlWindow, `document.querySelector('#open-display').textContent`)) === 'Показать на телевизоре');
+    ok('сервер внутри приложения отвечает', await ask(controlWindow, `fetch('/api/shows').then(r => r.json()).then(d => d.ok)`));
 
-    await run(`(() => { const f = document.querySelector('#add-show');
+    await ask(controlWindow, `(() => {
+      window.confirm = () => true; // в проверке некому нажимать «да»
+      const f = document.querySelector('#add-show');
       f.name.value = 'Проверка сборки';
       f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
-    await wait(900);
-    ok('шоу создаётся и сохраняется',
-      (await run(`document.querySelector('#brand-show').textContent`)) === 'Проверка сборки');
+    ok('шоу создаётся и сохраняется', await until(controlWindow,
+      `document.querySelector('#brand-show').textContent === 'Проверка сборки'`, 10000));
 
     openMirror();
     await wait(300);
@@ -273,9 +273,8 @@ async function selfTest() {
     ok('зеркало открывается из приложения', !!mirrorWindow);
     if (mirrorWindow) {
       await wait(1200);
-      const run2 = (code) => mirrorWindow.webContents.executeJavaScript(code, true);
-      ok('экран зеркала отрисовался', await run2(`!!document.querySelector('.mirror-glass')`));
-      ok('ладонь на месте', await run2(`(() => { const i = document.querySelector('.hand'); return !!i && i.complete && i.naturalWidth > 0; })()`));
+      ok('экран зеркала отрисовался', await ask(mirrorWindow, `!!document.querySelector('.mirror-glass')`));
+      ok('ладонь на месте', await ask(mirrorWindow, `(() => { const i = document.querySelector('.hand'); return !!i && i.complete && i.naturalWidth > 0; })()`));
       // просим браузер действительно загрузить начертание: в режиме ожидания
       // оно может быть ещё не нужно странице, и простая проверка врёт
       const fonts = await ask(mirrorWindow, `Promise.all([

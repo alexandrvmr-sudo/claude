@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульт ведущего — Волшебное зеркало</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <b>Волшебное зеркало</b>
+    <span id="conn" class="conn">подключение…</span>
+  </div>
+  <div class="top-actions">
+    <button id="open-display" class="btn btn-gold">Открыть экран зеркала</button>
+    <button id="export" class="btn">Сохранить файл</button>
+    <label class="btn">Загрузить файл<input id="import" type="file" accept="application/json" hidden></label>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab is-active" data-tab="show">Эфир</button>
+  <button class="tab" data-tab="people">Участники</button>
+  <button class="tab" data-tab="contests">Конкурсы</button>
+  <button class="tab" data-tab="scores">Баллы</button>
+  <button class="tab" data-tab="settings">Настройки</button>
+</nav>
+
+<main>
+  <!-- ЭФИР -->
+  <section class="panel" data-panel="show">
+    <div class="cols">
+      <div class="col">
+        <h2>Что показывает зеркало</h2>
+        <div class="modes" id="modes"></div>
+
+        <div class="field" id="contest-picker" hidden>
+          <label>Конкурс на экране</label>
+          <select id="mode-contest"></select>
+        </div>
+        <div class="field" id="person-picker" hidden>
+          <label>Участник на экране</label>
+          <select id="mode-person"></select>
+        </div>
+
+        <div class="field">
+          <label>Подпись внизу экрана (необязательно)</label>
+          <input id="message" type="text" placeholder="Например: Голосование жюри">
+        </div>
+        <label class="check"><input id="show-places" type="checkbox"> Показывать номера мест</label>
+
+        <h2 class="mt">Открытие баллов</h2>
+        <p class="hint" id="reveal-context">—</p>
+        <div class="reveal-actions">
+          <button id="reveal-next" class="btn btn-gold big">Открыть следующего <kbd>пробел</kbd></button>
+          <button id="reveal-all" class="btn">Открыть всех</button>
+          <button id="reveal-none" class="btn">Скрыть всех</button>
+        </div>
+        <div class="reveal-list" id="reveal-list"></div>
+      </div>
+
+      <div class="col">
+        <h2>Предпросмотр</h2>
+        <div class="preview"><iframe id="preview" src="display.html" title="Предпросмотр экрана"></iframe></div>
+        <p class="hint">Это уменьшенная копия того, что видят гости.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- УЧАСТНИКИ -->
+  <section class="panel" data-panel="people" hidden>
+    <h2>Добавить участника</h2>
+    <form id="add-person" class="row-form">
+      <input name="name" type="text" placeholder="Имя и фамилия" required>
+      <input name="note" type="text" placeholder="Город / регалии (необязательно)">
+      <input name="photo" type="file" accept="image/*">
+      <button class="btn btn-gold" type="submit">Добавить</button>
+    </form>
+    <p class="hint">Фото можно добавить позже, оно само обрежется в круг. Можно перетащить файл на карточку участника.</p>
+    <div class="people" id="people"></div>
+  </section>
+
+  <!-- КОНКУРСЫ -->
+  <section class="panel" data-panel="contests" hidden>
+    <h2>Конкурсы</h2>
+    <form id="add-contest" class="row-form">
+      <input name="name" type="text" placeholder="Название конкурса" required>
+      <button class="btn btn-gold" type="submit">Добавить</button>
+    </form>
+    <div class="contests" id="contests"></div>
+  </section>
+
+  <!-- БАЛЛЫ -->
+  <section class="panel" data-panel="scores" hidden>
+    <h2>Баллы</h2>
+    <p class="hint">Баллы сохраняются сразу. На экране они появятся только после «открытия» во вкладке «Эфир».</p>
+    <div class="table-wrap"><table id="score-table"></table></div>
+  </section>
+
+  <!-- НАСТРОЙКИ -->
+  <section class="panel" data-panel="settings" hidden>
+    <h2>Оформление</h2>
+    <div class="field"><label>Заголовок</label><input id="set-title" type="text"></div>
+    <div class="field"><label>Подзаголовок</label><input id="set-subtitle" type="text"></div>
+    <h2 class="mt">Опасная зона</h2>
+    <button id="clear-scores" class="btn">Обнулить все баллы</button>
+    <button id="reset-all" class="btn btn-danger">Стереть всё и начать заново</button>
+  </section>
+</main>
+
+<script src="shared.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

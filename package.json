@@ -1,0 +1,14 @@
+{
+  "name": "magic-mirror",
+  "version": "1.0.0",
+  "description": "Волшебное зеркало: пульт ведущего на ноутбуке + экран рейтинга на телевизоре (HDMI)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/e2e.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

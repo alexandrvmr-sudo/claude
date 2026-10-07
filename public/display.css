@@ -149,17 +149,16 @@ body {
   position: absolute;
   left: 50%;
   top: 52%;
-  width: 30rem;
+  width: 23rem;
   transform: translate(-50%, -50%);
-  color: var(--aqua);
-  opacity: 0.045;
-  filter: blur(2px) drop-shadow(0 0 3rem rgba(141, 240, 230, 0.5));
+  opacity: 0.1;
+  filter: blur(1px) drop-shadow(0 0 2.5rem rgba(141, 240, 230, 0.45));
   animation: pulse-hand 7s ease-in-out infinite;
   pointer-events: none;
 }
 @keyframes pulse-hand {
-  0%, 100% { opacity: 0.035; transform: translate(-50%, -50%) scale(1); }
-  50%      { opacity: 0.065; transform: translate(-50%, -50%) scale(1.04); }
+  0%, 100% { opacity: 0.08; transform: translate(-50%, -50%) scale(1); }
+  50%      { opacity: 0.14; transform: translate(-50%, -50%) scale(1.03); }
 }
 
 /* шапка */

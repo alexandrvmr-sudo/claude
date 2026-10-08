@@ -544,15 +544,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }
   console.log('\n  Остановить: Ctrl+C\n');
 
-  // Открываем пульт сразу: искать адрес вручную не нужно.
-  // В тестах вывод не в терминал, поэтому браузер не трогаем.
-  if (process.stdout.isTTY && !process.env.MIRROR_NO_OPEN) {
+  // Открываем пульт сразу: искать адрес вручную не нужно. В тестах вывод идёт
+  // не в терминал, поэтому браузер не трогаем; MIRROR_FORCE_OPEN нужен тесту,
+  // который проверяет, что отсутствие открывалки не роняет сервер.
+  const wantOpen = (process.stdout.isTTY || process.env.MIRROR_FORCE_OPEN)
+    && !process.env.MIRROR_NO_OPEN;
+  if (wantOpen) {
     const url = `http://localhost:${app.port}/admin.html`;
     const cmd = process.platform === 'darwin' ? ['open', [url]]
       : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
         : ['xdg-open', [url]];
     try {
-      spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }).unref();
+      const opener = spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true });
+      // Открывалки может не оказаться. Без этого обработчика ошибка запуска
+      // всплывает наверх и роняет уже работающий сервер.
+      opener.on('error', () => {
+        console.log(`  Браузер не открылся сам — откройте адрес выше вручную.\n`);
+      });
+      opener.unref();
     } catch { /* не вышло — адрес напечатан выше */ }
   }
 

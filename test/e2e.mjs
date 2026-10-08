@@ -23,6 +23,7 @@ if (!CHROME) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const checksEarly = [];
 
 // отдельный каталог данных, чтобы не затереть настоящее шоу
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirror-test-'));
@@ -36,6 +37,35 @@ for (let i = 0; i < 40; i++) {
 }
 
 const PORT = 9333;
+// Отсутствие программы-открывалки не должно ронять уже поднятый сервер
+{
+  const port = APP_PORT + 20;
+  const probe = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      MIRROR_DATA: dataDir,
+      MIRROR_FORCE_OPEN: '1',
+      PATH: '/nonexistent', // открывалки точно нет
+    },
+    stdio: 'ignore',
+  });
+  let alive = false;
+  for (let i = 0; i < 20; i += 1) {
+    await sleep(250);
+    try {
+      alive = (await (await fetch(`http://localhost:${port}/api/state`)).json()) !== null;
+      if (alive) break;
+    } catch { /* ещё поднимается */ }
+  }
+  await sleep(600); // падает он обычно сразу после старта
+  let stillAlive = false;
+  try { stillAlive = !!(await (await fetch(`http://localhost:${port}/api/state`)).json()); } catch { /* упал */ }
+  checksEarly.push(`${stillAlive ? 'OK  ' : 'FAIL'} сервер живёт, даже если браузер открыть нечем`);
+  probe.kill();
+}
+
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-sandbox', `--remote-debugging-port=${PORT}`,
   '--window-size=1500,1000', `${APP}/admin.html`,
@@ -86,7 +116,7 @@ await evaluate(`window.confirm = () => true;
   window.__promptAnswer = '';
   window.prompt = () => window.__promptAnswer; 'ok'`);
 
-const checks = [];
+const checks = [...checksEarly];
 let st;
 const ok = (name, cond, extra = '') => checks.push(`${cond ? 'OK  ' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
 

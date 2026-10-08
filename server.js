@@ -12,6 +12,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -501,9 +502,37 @@ export async function startServer({ dataDir, port, host } = {}) {
   };
 }
 
+// Порт мог остаться занят прошлым запуском — берём следующий свободный,
+// чтобы программа не падала с непонятной ошибкой прямо при старте.
+async function startOnFreePort() {
+  const wanted = Number(process.env.PORT) || 7777;
+  for (let port = wanted; port < wanted + 20; port += 1) {
+    try {
+      return await startServer({ port });
+    } catch (e) {
+      if (e && e.code === 'EADDRINUSE') {
+        console.log(`  Порт ${port} занят, пробую следующий…`);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error('Не нашёл свободный порт. Закройте другие запущенные копии программы.');
+}
+
 // Запуск из терминала
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const app = await startServer();
+  let app;
+  try {
+    app = await startOnFreePort();
+  } catch (e) {
+    console.error('\n  НЕ УДАЛОСЬ ЗАПУСТИТЬ\n');
+    console.error(`  ${e && e.message ? e.message : e}\n`);
+    console.error('  Что обычно помогает: закрыть другие окна терминала с программой');
+    console.error('  и запустить ещё раз. Это окно можно закрыть.\n');
+    process.exitCode = 1;
+  }
+  if (!app) process.exit(1);
   const nets = Object.values(os.networkInterfaces()).flat()
     .filter((n) => n && n.family === 'IPv4' && !n.internal)
     .map((n) => n.address);
@@ -514,6 +543,18 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`  С телефона/планшета в той же сети: http://${ip}:${app.port}/admin.html`);
   }
   console.log('\n  Остановить: Ctrl+C\n');
+
+  // Открываем пульт сразу: искать адрес вручную не нужно.
+  // В тестах вывод не в терминал, поэтому браузер не трогаем.
+  if (process.stdout.isTTY && !process.env.MIRROR_NO_OPEN) {
+    const url = `http://localhost:${app.port}/admin.html`;
+    const cmd = process.platform === 'darwin' ? ['open', [url]]
+      : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+        : ['xdg-open', [url]];
+    try {
+      spawn(cmd[0], cmd[1], { stdio: 'ignore', detached: true }).unref();
+    } catch { /* не вышло — адрес напечатан выше */ }
+  }
 
   // Терминал закрыли — дописываем последние правки, чтобы ничего не потерялось
   for (const signal of ['SIGINT', 'SIGTERM']) {

@@ -205,6 +205,18 @@ ok('шоу открывается обратно с участниками',
   `${st.showName}, участников ${st.participants.length}`);
 ok('эфир при открытии сбрасывается', st.display.mode === 'standby' && Object.keys(st.display.reveal).length === 0);
 
+// переключение шоу сразу после правки не теряет её (запись на диск отложенная)
+st = await (await fetch(`${APP}/api/state`)).json();
+st.participants.push({ id: 'late', name: 'Поздний Гость', note: '', photo: '', out: false, hidden: false });
+const beforeId = st.showId;
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await fetch(`${APP}/api/shows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Проверка переключения' }) });
+await fetch(`${APP}/api/shows/${beforeId}/open`, { method: 'POST' });
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('правка перед переключением шоу не теряется',
+  st.participants.some((p) => p.id === 'late'), `участников ${st.participants.length}`);
+
 // 7. управление звуком
 await evaluate(`document.querySelector('.tab[data-tab="settings"]').click()`);
 await sleep(200);
@@ -227,6 +239,69 @@ await evaluate(`document.querySelector('#mute-toggle').click()`);
 await sleep(300);
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('и обратное включение тоже', st.display.sound.on === true);
+
+// 7b. турнир: тройки -> по двое дальше -> финал
+await evaluate(`document.querySelector('.tab[data-tab="shows"]').click()`);
+await sleep(300);
+await evaluate(`(() => { const f = document.querySelector('#add-show');
+  f.name.value = 'Турнир'; f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
+await sleep(600);
+
+// шестерых заводим напрямую — проверяем сам турнир, а не форму участников
+st = await (await fetch(`${APP}/api/state`)).json();
+st.participants = ['Анна', 'Борис', 'Вера', 'Глеб', 'Дина', 'Егор']
+  .map((name, i) => ({ id: `t${i}`, name, note: '', photo: '', out: false, hidden: false }));
+st.scores = {};
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await sleep(400);
+
+await evaluate(`document.querySelector('.tab[data-tab="tournament"]').click()`);
+await sleep(300);
+await evaluate(`(() => { const c = document.querySelector('#tour-on');
+  c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+await sleep(400);
+await evaluate(`document.querySelector('#tour-start').click()`);
+await sleep(600);
+
+st = await (await fetch(`${APP}/api/state`)).json();
+let round = st.tournament.rounds[0];
+ok('первый тур — две тройки',
+  st.tournament.rounds.length === 1 && round.groups.length === 2
+  && round.groups.every((g) => g.members.length === 3),
+  round.groups.map((g) => g.members.length).join('+'));
+ok('у тура свой конкурс', st.contests.filter((c) => c.roundId === round.id).length === 1);
+ok('режим «Сетка тура» появился в эфире',
+  await evaluate(`[...document.querySelectorAll('#modes .btn')].some(b => b.textContent === 'Сетка тура')`));
+
+// баллы: в каждой тройке у первых двоих больше
+const roundContest = st.contests.find((c) => c.roundId === round.id).id;
+st.scores = {};
+for (const g of round.groups) {
+  g.members.forEach((pid, i) => { st.scores[pid] = { [roundContest]: 10 - i * 3 }; });
+}
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await sleep(500);
+
+await evaluate(`[...document.querySelectorAll('#tour-current button')].find(b => b.textContent === 'Подвести итоги тура').click()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+round = st.tournament.rounds[0];
+const perGroup = round.groups.map((g) => g.members.filter((pid) => round.advancing.includes(pid)).length);
+ok('из каждой тройки проходят двое',
+  round.finished && round.advancing.length === 4 && perGroup.every((n) => n === 2),
+  `прошли ${round.advancing.length}, по группам ${perGroup.join('+')}`);
+ok('проходят те, у кого больше баллов',
+  round.groups.every((g) => round.advancing.includes(g.members[0]) && round.advancing.includes(g.members[1])));
+
+await evaluate(`[...document.querySelectorAll('#tour-current button')].find(b => b.textContent === 'Сформировать следующий тур').click()`);
+await sleep(700);
+st = await (await fetch(`${APP}/api/state`)).json();
+const final = st.tournament.rounds[1];
+ok('четверо прошедших собираются в финал',
+  st.tournament.rounds.length === 2 && final && final.groups.length === 1
+  && final.groups[0].members.length === 4 && final.name === 'Финал',
+  final ? `${final.name}, групп ${final.groups.length}` : 'тура нет');
+ok('финал открыт как текущий тур', st.tournament.currentRoundId === final.id);
 
 // 8. за весь прогон страница не выбросила ошибок
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));

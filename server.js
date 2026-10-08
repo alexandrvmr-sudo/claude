@@ -46,6 +46,15 @@ function defaultShow() {
     ],
     participants: [],
     scores: {}, // scores[participantId][contestId] = число или null
+    // Турнир: участники сражаются группами, из каждой группы проходят лучшие.
+    // Конкурсы тура помечены roundId, вне турнира это поле пустое.
+    tournament: {
+      on: false,
+      groupSize: 3, // по сколько человек в группе
+      advance: 2, // сколько проходит дальше из каждой группы
+      rounds: [], // [{ id, name, groups: [{id, name, members: [pid]}], advancing: [pid], finished }]
+      currentRoundId: null,
+    },
   };
 }
 
@@ -134,6 +143,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       contests: state.contests,
       participants: state.participants,
       scores: state.scores,
+      tournament: state.tournament,
     };
   }
 
@@ -176,12 +186,15 @@ export async function startServer({ dataDir, port, host } = {}) {
   // настройки звука — это настройка техники, а не шоу, поэтому остаются.
   function openShow(parsed) {
     const sound = state.display.sound;
+    const base = defaultShow();
     state = {
       rev: (state.rev || 0) + 1,
       showId: parsed.id,
       showName: parsed.name,
-      ...defaultShow(),
+      ...base,
       ...parsed.show,
+      // шоу, сохранённые до появления турнира, не знают про это поле
+      tournament: { ...base.tournament, ...(parsed.show.tournament || {}) },
       display: { ...defaultDisplay(), sound },
     };
   }
@@ -194,6 +207,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display = { ...base.display, ...(parsed.display || {}) };
       state.display.count = { ...base.display.count, ...(parsed.display?.count || {}) };
       state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
+      state.tournament = { ...base.tournament, ...(parsed.tournament || {}) };
       console.log('Состояние загружено');
     } catch {
       console.log('Создаю новое состояние');
@@ -318,6 +332,8 @@ export async function startServer({ dataDir, port, host } = {}) {
     if (pathname === '/api/shows' && req.method === 'POST') {
       try {
         const { name, from } = JSON.parse(await readBody(req) || '{}');
+        // дописываем текущее шоу до переключения, иначе последние правки пропадут
+        if (state.showId) saveNow();
         const newId = id('show');
         const title = (name || '').trim() || 'Новое шоу';
         if (from === 'current') {
@@ -349,7 +365,9 @@ export async function startServer({ dataDir, port, host } = {}) {
       const action = showMatch[2];
       try {
         if (action === '/open' && req.method === 'POST') {
-          openShow(await readShow(showId));
+          const parsed = await readShow(showId);
+          if (state.showId && state.showId !== showId) saveNow(); // не теряем то, что набрали
+          openShow(parsed);
           scheduleSave();
           broadcast();
           return sendJson(res, 200, { ok: true, name: state.showName });

@@ -47,14 +47,14 @@ function avatar(p, cls) {
 
 function captureRects() {
   prevRects = new Map();
-  stage.querySelectorAll('.row[data-id]').forEach((n) => {
+  stage.querySelectorAll('[data-id]').forEach((n) => {
     prevRects.set(n.dataset.id, n.getBoundingClientRect().top);
   });
 }
 
 // FLIP: строки плавно переезжают на новые места
 function playRects() {
-  stage.querySelectorAll('.row[data-id]').forEach((n) => {
+  stage.querySelectorAll('[data-id]').forEach((n) => {
     const before = prevRects.get(n.dataset.id);
     if (before === undefined) return;
     const delta = before - n.getBoundingClientRect().top;
@@ -70,28 +70,34 @@ function playRects() {
 // пока всё не поместится без обрезки. Работает и для списка, и для портрета —
 // внутри обоих размеры заданы в em, поэтому высота масштабируется линейно.
 function fitBlock() {
-  const wrap = stage.querySelector('.rows, .solo');
+  const wrap = stage.querySelector('.rows, .solo, .grid-groups');
   if (!wrap) return;
-  const base = parseFloat(getComputedStyle(document.documentElement).fontSize);
-  wrap.style.fontSize = `${base}px`;
+  // Сбрасываем прошлую подгонку, иначе после переезда окна на экран побольше
+  // блок так и остался бы ужатым. Базовый кегль берём из CSS самого блока:
+  // у сетки групп он крупнее остальных.
+  wrap.style.fontSize = '';
+  const base = parseFloat(getComputedStyle(wrap).fontSize);
 
   const kids = [...wrap.children];
   if (!kids.length) return;
   const style = getComputedStyle(wrap);
-  const gap = parseFloat(style.rowGap) || 0;
-  const row = style.flexDirection.startsWith('row');
-  // считаем сами: scrollHeight врёт, когда содержимое центрировано и вылезает вверх
-  const heights = kids.map((n) => {
-    const m = getComputedStyle(n);
-    return n.offsetHeight + (parseFloat(m.marginTop) || 0) + (parseFloat(m.marginBottom) || 0);
-  });
-  const need = row
-    ? Math.max(...heights) // колонки стоят рядом — важна самая высокая
-    : heights.reduce((a, b) => a + b, 0) + gap * (kids.length - 1);
   const avail = wrap.clientHeight - (parseFloat(style.paddingTop) || 0) - (parseFloat(style.paddingBottom) || 0);
+  if (avail <= 0) return;
 
-  if (need > avail && avail > 0) {
-    wrap.style.fontSize = `${Math.max(6, base * (avail / need) - 0.5)}px`;
+  // Меряем по габаритам детей: scrollHeight врёт, когда содержимое центрировано
+  // и вылезает вверх, а габариты честны и для строк, и для колонок, и для сетки.
+  const measure = () => {
+    const rects = kids.map((n) => n.getBoundingClientRect());
+    return Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top));
+  };
+
+  let size = base;
+  // сетка групп при сжатии может переложиться, поэтому уточняем в пару заходов
+  for (let i = 0; i < 3; i += 1) {
+    const need = measure();
+    if (need <= avail) break;
+    size = Math.max(6, size * (avail / need) - 0.5);
+    wrap.style.fontSize = `${size}px`;
   }
 }
 
@@ -213,6 +219,66 @@ function startCounter(numEl, labelEl, opts) {
   counter.raf = requestAnimationFrame(step);
 }
 
+// Сетка тура: группы рядом, в каждой свои участники и баллы за тур.
+// Баллы закрыты, пока ведущий их не откроет, — как и в обычном рейтинге.
+function groupsView(round) {
+  const wrap = el('div', 'grid-groups');
+  if (!round) {
+    wrap.appendChild(el('p', 'empty', 'Тур ещё не сформирован'));
+    return wrap;
+  }
+  wrap.dataset.groups = String(round.groups.length);
+
+  for (const group of round.groups) {
+    const card = el('div', 'gcard');
+    card.appendChild(el('div', 'gname', group.name));
+
+    const rows = MM.groupStanding(state, round, group).map((r) => ({
+      ...r,
+      revealed: MM.isRevealed(state, round.id, r.p.id),
+    }));
+    // нераскрытые уходят вниз в порядке жеребьёвки, чтобы не выдать результат
+    rows.sort((a, b) => {
+      if (a.revealed !== b.revealed) return a.revealed ? -1 : 1;
+      if (a.revealed && b.revealed && a.value !== b.value) return b.value - a.value;
+      return a.i - b.i;
+    });
+
+    for (const row of rows) {
+      const line = el('div', 'gline');
+      line.dataset.id = row.p.id;
+      const goes = round.finished && row.revealed && row.advances;
+      if (goes) line.classList.add('goes');
+      if (!row.revealed) line.classList.add('hidden-score');
+      if (row.p.out) line.classList.add('out');
+
+      line.appendChild(avatar(row.p, 'gpic'));
+
+      const who = el('div', 'gwho');
+      who.appendChild(el('div', 'gnm', row.p.name || 'Без имени'));
+      if (goes) who.appendChild(el('div', 'gbadge', 'проходит дальше'));
+      else if (row.p.note) who.appendChild(el('div', 'gnote', row.p.note));
+      line.appendChild(who);
+
+      const score = el('div', 'gscore');
+      if (row.revealed) {
+        score.textContent = String(row.value);
+        if (!prevReveal[MM.revealKey(round.id, row.p.id)]) {
+          score.classList.add('revealed');
+          newlyRevealed += 1;
+        }
+      } else {
+        score.textContent = '?';
+        score.classList.add('unknown');
+      }
+      line.appendChild(score);
+      card.appendChild(line);
+    }
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
 function soloView(p, { winner = false } = {}) {
   const d = state.display;
   const c = d.count || { source: 'total', runId: 0, duration: 3000, showBreakdown: false };
@@ -296,6 +362,10 @@ function render() {
   } else if (d.mode === 'leaderboard') {
     stage.appendChild(el('h2', 'stage-title', 'Общий рейтинг'));
     stage.appendChild(rowsView(null));
+  } else if (d.mode === 'groups') {
+    const round = MM.currentRound(state);
+    stage.appendChild(el('h2', 'stage-title', round ? round.name : 'Турнир'));
+    stage.appendChild(groupsView(round));
   } else if (d.mode === 'contest') {
     const c = state.contests.find((x) => x.id === d.contestId) || state.contests[0];
     stage.appendChild(el('h2', 'stage-title', c ? c.name : 'Конкурс'));
@@ -321,6 +391,11 @@ function render() {
   prevTestId = d.sound?.testId || 0;
   firstRender = false;
 }
+
+// Окно сменило размер (например, переехало на телевизор) или дозагрузился шрифт —
+// пересчитываем посадку: от этого зависят высоты строк.
+addEventListener('resize', fitBlock);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBlock);
 
 // --- звук ---
 // Браузер запрещает звук до первого действия пользователя: ловим любое

@@ -322,6 +322,102 @@ body {
 }
 .score.revealed { animation: pop 0.75s cubic-bezier(0.2, 1.4, 0.4, 1); }
 
+/* сетка тура: группы рядом, в каждой свои участники */
+.grid-groups {
+  display: grid;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  align-content: center;
+  justify-content: center;
+  grid-template-columns: repeat(auto-fit, minmax(19em, 1fr));
+  gap: 1em;
+  font-size: 1.35rem; /* крупнее остальных блоков; display.js ужмёт, если не влезет */
+  padding: 0 0.6rem;
+  width: 100%;
+}
+.grid-groups[data-groups='1'] { grid-template-columns: minmax(20em, 34em); }
+.grid-groups[data-groups='2'] { grid-template-columns: repeat(2, minmax(20em, 1fr)); }
+
+.gcard {
+  border: 1px solid rgba(141, 240, 230, 0.18);
+  border-radius: 0.8em;
+  padding: 0.8em 0.9em 0.9em;
+  background: linear-gradient(180deg, rgba(141, 240, 230, 0.09), rgba(10, 36, 41, 0.45));
+  box-shadow: 0 0 2.5rem rgba(0, 0, 0, 0.35) inset;
+}
+.gname {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 1.1em;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--aqua);
+  padding-bottom: 0.5em;
+  margin-bottom: 0.4em;
+  border-bottom: 1px solid rgba(141, 240, 230, 0.2);
+  text-shadow: 0 0 1.4rem rgba(141, 240, 230, 0.4);
+}
+
+.gline {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.8em;
+  padding: 0.4em 0.3em;
+  border-radius: 0.5em;
+  transition: background 0.5s, opacity 0.5s, box-shadow 0.5s;
+}
+.gline.hidden-score { opacity: 0.45; }
+.gline.out { opacity: 0.3; filter: grayscale(1); }
+.gline.goes {
+  background: linear-gradient(90deg, rgba(141, 240, 230, 0.22), transparent);
+  box-shadow: inset 2px 0 0 var(--aqua-bright), 0 0 1.8rem rgba(141, 240, 230, 0.2);
+}
+
+.gpic {
+  width: 2.9em;
+  height: 2.9em;
+  border-radius: 0.4em;
+  object-fit: cover;
+  border: 1px solid rgba(141, 240, 230, 0.4);
+  background: #0a2429;
+}
+.gpic.placeholder { display: grid; place-items: center; font-family: var(--font-display); font-size: 1.2em; color: rgba(141, 240, 230, 0.4); }
+
+.gwho { min-width: 0; }
+.gnm {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 1.25em;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnote, .gbadge {
+  font-size: 0.62em;
+  font-weight: 300;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.gnote { color: rgba(141, 240, 230, 0.45); }
+.gbadge { color: var(--aqua-bright); text-shadow: 0 0 1.2rem rgba(141, 240, 230, 0.8); }
+
+.gscore {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.7em;
+  color: var(--aqua-bright);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 1.4rem rgba(141, 240, 230, 0.55);
+  min-width: 1.8em;
+  text-align: right;
+}
+.gscore.unknown { color: rgba(141, 240, 230, 0.25); font-weight: 300; text-shadow: none; }
+.gscore.revealed { animation: pop 0.75s cubic-bezier(0.2, 1.4, 0.4, 1); }
+
 /* крупный портрет — режимы «участник» и «победитель»:
    слева фото, справа имя и баллы. Размеры в em — блок ужимается из display.js. */
 .solo {

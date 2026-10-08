@@ -26,6 +26,7 @@
   <button class="tab is-active" data-tab="shows">Шоу</button>
   <button class="tab" data-tab="show">Эфир</button>
   <button class="tab" data-tab="people">Участники</button>
+  <button class="tab" data-tab="tournament">Турнир</button>
   <button class="tab" data-tab="contests">Конкурсы</button>
   <button class="tab" data-tab="scores">Баллы</button>
   <button class="tab" data-tab="settings">Настройки</button>
@@ -133,6 +134,36 @@
     <div class="people" id="people"></div>
   </section>
 
+  <!-- ТУРНИР -->
+  <section class="panel" data-panel="tournament" hidden>
+    <h2>Турнирный режим</h2>
+    <label class="check"><input id="tour-on" type="checkbox"> Участники сражаются группами</label>
+    <p class="hint">Все делятся на группы, в каждой свои конкурсы. Из каждой группы дальше
+      проходят лучшие, из прошедших собирается следующий тур — и так до финала.</p>
+
+    <div id="tour-setup" hidden>
+      <div class="two">
+        <div class="field">
+          <label>По сколько человек в группе</label>
+          <input id="tour-size" type="number" min="2" max="8" step="1">
+        </div>
+        <div class="field">
+          <label>Сколько проходит дальше из каждой группы</label>
+          <input id="tour-advance" type="number" min="1" max="7" step="1">
+        </div>
+      </div>
+      <div class="reveal-actions">
+        <button id="tour-start" class="btn btn-gold">Сформировать первый тур</button>
+        <button id="tour-reshuffle" class="btn">Перемешать группы</button>
+        <button id="tour-reset" class="btn btn-danger">Сбросить турнир</button>
+      </div>
+      <p class="hint" id="tour-hint">—</p>
+    </div>
+
+    <div id="tour-current"></div>
+    <div id="tour-history"></div>
+  </section>
+
   <!-- КОНКУРСЫ -->
   <section class="panel" data-panel="contests" hidden>
     <h2>Конкурсы</h2>
@@ -147,6 +178,7 @@
   <section class="panel" data-panel="scores" hidden>
     <h2>Баллы</h2>
     <p class="hint">Баллы сохраняются сразу. На экране они появятся только после «открытия» во вкладке «Эфир».</p>
+    <p class="hint" id="scores-note" hidden></p>
     <div class="table-wrap"><table id="score-table"></table></div>
   </section>
 

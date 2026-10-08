@@ -197,7 +197,13 @@
       <label>Громкость: <span id="sound-volume-value">70%</span></label>
       <input id="sound-volume" type="range" min="0" max="100" step="5">
     </div>
-    <label class="check"><input id="sound-ambient" type="checkbox"> Тихий гул зеркала в режиме ожидания</label>
+    <label class="check"><input id="music-on" type="checkbox"> Музыка на экране ожидания</label>
+    <div class="field" style="max-width: 24rem; margin-top: 0.7rem;">
+      <label>Громкость музыки: <span id="music-volume-value">60%</span></label>
+      <input id="music-volume" type="range" min="0" max="100" step="5">
+    </div>
+    <p class="hint">Трек лежит в файле <code>public/music/standby.mp3</code> — замените его,
+      чтобы поставить свою музыку. Короткая запись зацикливается с плавной склейкой.</p>
     <button id="sound-test" class="btn" style="margin-top: 0.8rem;">Проверить звук на телевизоре</button>
     <h2 class="mt">Опасная зона</h2>
     <button id="clear-scores" class="btn">Обнулить все баллы</button>

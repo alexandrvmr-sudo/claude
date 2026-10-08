@@ -975,7 +975,8 @@ $('#show-rename').addEventListener('click', async () => {
 
 // --- звук ---
 function soundCfg() {
-  state.display.sound = state.display.sound || { on: true, volume: 0.7, ambient: false, testId: 0 };
+  state.display.sound = state.display.sound || { on: true, volume: 0.7, testId: 0 };
+  state.display.sound.music = state.display.sound.music || { on: true, volume: 0.6 };
   return state.display.sound;
 }
 
@@ -984,7 +985,10 @@ function renderSound() {
   $('#sound-on').checked = snd.on !== false;
   $('#sound-volume').value = String(Math.round((snd.volume ?? 0.7) * 100));
   $('#sound-volume-value').textContent = `${Math.round((snd.volume ?? 0.7) * 100)}%`;
-  $('#sound-ambient').checked = !!snd.ambient;
+  const music = snd.music || { on: true, volume: 0.6 };
+  $('#music-on').checked = music.on !== false;
+  $('#music-volume').value = String(Math.round((music.volume ?? 0.6) * 100));
+  $('#music-volume-value').textContent = `${Math.round((music.volume ?? 0.6) * 100)}%`;
   const btn = $('#mute-toggle');
   btn.textContent = snd.on !== false ? 'Звук вкл.' : 'Звук выкл.';
   btn.classList.toggle('is-off', snd.on === false);
@@ -992,7 +996,12 @@ function renderSound() {
 
 $('#sound-on').addEventListener('change', (e) => { soundCfg().on = e.target.checked; push(); });
 $('#mute-toggle').addEventListener('click', () => { soundCfg().on = soundCfg().on === false; push(); });
-$('#sound-ambient').addEventListener('change', (e) => { soundCfg().ambient = e.target.checked; push(); });
+$('#music-on').addEventListener('change', (e) => { soundCfg().music.on = e.target.checked; push(); });
+$('#music-volume').addEventListener('input', (e) => {
+  soundCfg().music.volume = Number(e.target.value) / 100;
+  $('#music-volume-value').textContent = `${e.target.value}%`;
+  pushQuiet(); // ползунок двигают часто
+});
 $('#sound-volume').addEventListener('input', (e) => {
   soundCfg().volume = Number(e.target.value) / 100;
   $('#sound-volume-value').textContent = `${e.target.value}%`;

@@ -165,6 +165,53 @@ await evaluate(`window.__osc = 0`);
 await sleep(1800);
 ok('при выключенном звуке тихо', (await evaluate(`window.__osc`)) === 0);
 
+// 7. музыка на экране ожидания
+await post((st) => {
+  st.display.sound = { ...st.display.sound, on: true, music: { on: true, volume: 0.6 } };
+  st.display.mode = 'standby';
+});
+const playing = await waitFor(`(() => {
+  const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+  return !!a && a.volume > 0.1;
+})()`, true, 8000);
+ok('в ожидании играет музыка', playing === true);
+ok('это наш трек', String(await evaluate(`(document.querySelector('audio') || {}).src || ''`)).includes('music/standby.mp3'));
+
+// Петля склеивается: перематываем к концу и следим за суммарной громкостью.
+// Если бы склейки не было, на стыке она провалилась бы в ноль.
+// ждём, пока музыка доберётся до полной громкости: иначе в замер попадёт
+// её собственное плавное появление, а не стык петли
+await waitFor(`[...document.querySelectorAll('audio')].some((x) => !x.paused && x.volume > 0.55)`, true, 8000);
+await evaluate(`(() => {
+  const els = [...document.querySelectorAll('audio')];
+  const a = els.find((x) => !x.paused);
+  // встаём чуть раньше склейки, чтобы движок успел подготовить второй проигрыватель
+  a.currentTime = Math.max(0, a.duration - 3);
+  window.__minVol = 1;
+  window.__sampler = setInterval(() => {
+    const v = els.reduce((s, x) => s + (x.paused ? 0 : x.volume), 0);
+    window.__minVol = Math.min(window.__minVol, v);
+  }, 50);
+  return true;
+})()`);
+await sleep(4200);
+const minVol = await evaluate(`(() => { clearInterval(window.__sampler); return window.__minVol; })()`);
+ok('на стыке петли громкость не проваливается', minVol > 0.4,
+  `минимум ${Number(minVol).toFixed(2)} при целевых 0.6`);
+
+// уходим с экрана ожидания — музыка гаснет
+await post((st) => { st.display.mode = 'leaderboard'; });
+const stopped = await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 8000);
+ok('вне ожидания музыка выключается', stopped === true);
+
+// общий выключатель звука гасит и музыку
+await post((st) => { st.display.mode = 'standby'; });
+await waitFor(`[...document.querySelectorAll('audio')].some((x) => !x.paused)`, true, 8000);
+await post((st) => { st.display.sound.on = false; });
+const muted = await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 8000);
+ok('общий выключатель гасит музыку', muted === true);
+await post((st) => { st.display.sound.on = true; st.display.mode = 'leaderboard'; });
+
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));

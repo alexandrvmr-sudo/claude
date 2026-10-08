@@ -340,7 +340,10 @@ function render() {
   // смена картинки на экране слышна: победителя встречаем фанфарами
   if (!firstRender && d.mode !== prevMode) sound(d.mode === 'winner' ? 'fanfare' : 'whoosh');
   if (!firstRender && (d.sound?.testId || 0) !== prevTestId) sound('strike');
-  if (!PREVIEW) MMSound.ambient(d.mode === 'standby' && d.sound?.ambient);
+  if (!PREVIEW) {
+    const m = (d.sound && d.sound.music) || {};
+    MMSound.music({ on: d.mode === 'standby' && m.on !== false, volume: m.volume ?? 0.6 });
+  }
 
   // подпись внизу ставим до перерисовки сцены: она меняет высоту,
   // а список подгоняется под оставшееся место

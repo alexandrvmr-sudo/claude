@@ -100,18 +100,93 @@ window.MMSound = (() => {
     },
   };
 
+  // --- музыка ---
+  const MUSIC_SRC = 'music/standby.mp3';
+  const CROSSFADE = 1.4; // секунд на склейку петли
+  const PRESTART = 0.8; // за сколько до склейки будить второй проигрыватель
+  let music = null;
+
+  function ensureMusic() {
+    if (music) return music;
+    const make = () => {
+      const el = new Audio(MUSIC_SRC);
+      el.preload = 'auto';
+      el.volume = 0;
+      el.hidden = true;
+      document.body.appendChild(el); // в документе — чтобы браузер вёл себя предсказуемо
+      return el;
+    };
+    music = { els: [make(), make()], active: 0, want: 0, gain: 0, timer: 0 };
+    return music;
+  }
+
+  function start() {
+    const m = music;
+    const el = m.els[m.active];
+    if (el.paused) el.play().catch(() => { /* браузер ещё не разрешил звук */ });
+  }
+
+  function tickMusic() {
+    const m = music;
+    if (!m) return;
+    // плавно появляемся и затухаем, примерно за секунду
+    const step = 0.04;
+    if (m.gain < m.want) m.gain = Math.min(m.want, m.gain + step);
+    else if (m.gain > m.want) m.gain = Math.max(m.want, m.gain - step);
+
+    if (m.gain <= 0 && m.want <= 0) {
+      for (const el of m.els) {
+        if (!el.paused) el.pause();
+        el.volume = 0;
+      }
+      clearInterval(m.timer);
+      m.timer = 0;
+      return;
+    }
+
+    const cur = m.els[m.active];
+    const other = m.els[1 - m.active];
+    const dur = cur.duration;
+    let mix = 1;
+
+    if (Number.isFinite(dur) && dur > CROSSFADE * 2) {
+      // Запускаем второй проигрыватель заранее и беззвучно: ему нужно время
+      // раскрутиться, иначе на стыке получится провал.
+      if (cur.currentTime > dur - (CROSSFADE + PRESTART) && other.paused && m.want > 0) {
+        other.currentTime = 0;
+        other.volume = 0;
+        other.play().catch(() => {});
+      }
+      if (cur.currentTime > dur - CROSSFADE) {
+        mix = Math.max(0, (dur - cur.currentTime) / CROSSFADE);
+      }
+    }
+
+    cur.volume = m.gain * mix;
+    other.volume = m.gain * (1 - mix);
+
+    // старый проигрыватель доиграл — меняем их местами
+    if (cur.ended || (Number.isFinite(dur) && cur.currentTime >= dur - 0.05)) {
+      cur.pause();
+      cur.currentTime = 0;
+      cur.volume = 0;
+      m.active = 1 - m.active;
+    }
+  }
+
   return {
     // настройки приходят с пульта
     configure(s) {
       settings = { on: s?.on !== false, volume: typeof s?.volume === 'number' ? s.volume : 0.7 };
       if (master) master.gain.value = settings.volume;
-      if (!settings.on) this.ambient(false);
+      if (!settings.on && music) music.want = 0; // общий выключатель гасит и музыку
     },
 
     // браузер не даёт играть до первого действия пользователя — зовём после клика или клавиши
     unlock() {
       const c = ensure();
       if (c && c.state === 'suspended') c.resume();
+      this.resumeMusic();
       return this.ready();
     },
 
@@ -150,35 +225,21 @@ window.MMSound = (() => {
       };
     },
 
-    // тихий гул зеркала в режиме ожидания
-    ambient(on) {
-      if (on && settings.on) {
-        if (drone || !ensure() || ctx.state !== 'running') return;
-        const g = ctx.createGain();
-        g.gain.value = 0.0001;
-        g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 2);
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 320;
-        const a = ctx.createOscillator();
-        a.type = 'sine';
-        a.frequency.value = 55;
-        const b = ctx.createOscillator();
-        b.type = 'sine';
-        b.frequency.value = 82.5; // чистая квинта: гудит, но не давит
-        a.connect(filter);
-        b.connect(filter);
-        filter.connect(g).connect(master);
-        a.start();
-        b.start();
-        drone = { a, b, g };
-      } else if (drone) {
-        const { a, b, g } = drone;
-        drone = null;
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1);
-        a.stop(ctx.currentTime + 1.1);
-        b.stop(ctx.currentTime + 1.1);
-      }
+    // --- музыка на экране ожидания ---
+    // Трек короткий, поэтому зацикливаем его двумя проигрывателями с плавной
+    // склейкой: иначе на стыке слышен щелчок.
+    music({ on, volume = 0.6 } = {}) {
+      const want = on && settings.on ? Math.max(0, Math.min(1, volume)) : 0;
+      if (!music && !want) return; // нечего включать и нечего гасить
+      const m = ensureMusic();
+      m.want = want;
+      if (want) start();
+      if (!m.timer) m.timer = setInterval(tickMusic, 40);
+    },
+
+    // звук разрешили позже — пробуем доиграть
+    resumeMusic() {
+      if (music && music.want > 0) start();
     },
   };
 })();

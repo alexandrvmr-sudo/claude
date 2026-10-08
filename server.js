@@ -29,6 +29,10 @@ const MIME = {
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
 };
 
 function id(prefix = 'x') {
@@ -70,8 +74,9 @@ function defaultDisplay() {
     sound: {
       on: true,
       volume: 0.7,
-      ambient: false, // тихий гул зеркала в режиме ожидания
       testId: 0, // пульт увеличивает — экран проигрывает пробный звук
+      // музыка на экране ожидания, файл public/music/standby.mp3
+      music: { on: true, volume: 0.6 },
     },
     // режим «объявление результата»: баллы накручиваются от нуля
     count: {
@@ -207,6 +212,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display = { ...base.display, ...(parsed.display || {}) };
       state.display.count = { ...base.display.count, ...(parsed.display?.count || {}) };
       state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
+      state.display.sound.music = { ...base.display.sound.music, ...(parsed.display?.sound?.music || {}) };
       state.tournament = { ...base.tournament, ...(parsed.tournament || {}) };
       console.log('Состояние загружено');
     } catch {
@@ -268,11 +274,35 @@ export async function startServer({ dataDir, port, host } = {}) {
     });
   }
 
-  async function serveFile(res, filePath) {
+  // Отдаём файл целиком или куском. Куски нужны звуку и видео: без них
+  // браузер не умеет перематывать и спотыкается на зацикливании.
+  async function serveFile(res, filePath, range) {
     try {
+      const type = MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+      const stat = await fsp.stat(filePath);
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range || '');
+
+      if (m && stat.size) {
+        let start = m[1] === '' ? stat.size - Number(m[2]) : Number(m[1]);
+        let end = m[1] === '' || m[2] === '' ? stat.size - 1 : Number(m[2]);
+        start = Math.max(0, Math.min(start, stat.size - 1));
+        end = Math.max(start, Math.min(end, stat.size - 1));
+        res.writeHead(206, {
+          'Content-Type': type,
+          'Content-Length': end - start + 1,
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store',
+        });
+        fs.createReadStream(filePath, { start, end }).pipe(res);
+        return;
+      }
+
       const data = await fsp.readFile(filePath);
       res.writeHead(200, {
-        'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+        'Content-Type': type,
+        'Content-Length': data.length,
+        'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
       });
       res.end(data);
@@ -444,13 +474,13 @@ export async function startServer({ dataDir, port, host } = {}) {
     if (pathname.startsWith('/photos/')) {
       const target = safeJoin(PHOTO_DIR, pathname.slice('/photos'.length));
       if (!target) return sendJson(res, 400, { ok: false });
-      return serveFile(res, target);
+      return serveFile(res, target, req.headers.range);
     }
 
     const rel = pathname === '/' ? '/index.html' : pathname;
     const target = safeJoin(PUBLIC_DIR, rel);
     if (!target) return sendJson(res, 400, { ok: false });
-    return serveFile(res, target);
+    return serveFile(res, target, req.headers.range);
   });
 
   await new Promise((resolve, reject) => {

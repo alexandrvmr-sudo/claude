@@ -199,10 +199,11 @@ const minVol = await evaluate(`(() => { clearInterval(window.__sampler); return 
 ok('на стыке петли громкость не проваливается', minVol > 0.4,
   `минимум ${Number(minVol).toFixed(2)} при целевых 0.6`);
 
-// уходим с экрана ожидания — музыка гаснет
+// уходим с экрана ожидания — музыка не обрывается, звучит на любом экране
 await post((st) => { st.display.mode = 'leaderboard'; });
-const stopped = await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 8000);
-ok('вне ожидания музыка выключается', stopped === true);
+await sleep(1500);
+const keepsPlaying = await evaluate(`[...document.querySelectorAll('audio')].some((x) => !x.paused && x.volume > 0.1)`);
+ok('на других экранах музыка продолжает играть', keepsPlaying === true);
 
 // общий выключатель звука гасит и музыку
 await post((st) => { st.display.mode = 'standby'; });
@@ -257,10 +258,13 @@ await post((st) => {
 const silent = await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 10000);
 ok('«без музыки» выключает трек задания', silent === true);
 
-// вне задания музыка не играет
-await post((st) => { st.display.mode = 'leaderboard'; });
-ok('вне задания тишина',
-  (await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 8000)) === true);
+// на экране рейтинга продолжает звучать трек задания
+await post((st) => { st.contests[1].music = undefined; st.display.mode = 'leaderboard'; });
+const onBoard = await waitFor(`(() => {
+  const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+  return a ? decodeURIComponent(a.src).includes('music/tasks/') : false;
+})()`, true, 10000);
+ok('на рейтинге звучит музыка заданий', onBoard === true);
 dropTmp();
 
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));

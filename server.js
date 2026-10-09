@@ -316,6 +316,28 @@ export async function startServer({ dataDir, port, host } = {}) {
     }
   }
 
+  // Ищем звуковые файлы в папке и во вложенных папках (не глубже двух уровней)
+  const AUDIO_RE = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i;
+  async function scanMusic(dir, prefix = '', depth = 0) {
+    const found = [];
+    let entries = [];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return found; // папки нет — значит, музыки нет
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (depth < 2) found.push(...await scanMusic(path.join(dir, entry.name), rel, depth + 1));
+      } else if (AUDIO_RE.test(entry.name)) {
+        found.push(rel);
+      }
+    }
+    return found;
+  }
+
   // Путь внутри каталога? Защита от выхода наружу через ../
   function safeJoin(base, rel) {
     const target = path.resolve(base, '.' + path.posix.normalize('/' + rel));
@@ -445,14 +467,11 @@ export async function startServer({ dataDir, port, host } = {}) {
       }
     }
 
-    // Список музыки для заданий: что лежит в public/music/tasks
+    // Список музыки для заданий: что лежит в public/music/tasks.
+    // Заглядываем и во вложенные папки: музыку часто кладут папкой целиком.
     if (pathname === '/api/music' && req.method === 'GET') {
-      let tasks = [];
-      try {
-        tasks = (await fsp.readdir(path.join(PUBLIC_DIR, 'music', 'tasks')))
-          .filter((f) => /\.(mp3|m4a|ogg|wav|aac)$/i.test(f))
-          .sort((a, b) => a.localeCompare(b, 'ru'));
-      } catch { /* папки нет — значит, музыки заданий нет */ }
+      const tasks = await scanMusic(path.join(PUBLIC_DIR, 'music', 'tasks'));
+      tasks.sort((a, b) => a.localeCompare(b, 'ru'));
       return sendJson(res, 200, { ok: true, tasks });
     }
 

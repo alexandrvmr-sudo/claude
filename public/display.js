@@ -70,7 +70,7 @@ function playRects() {
 // пока всё не поместится без обрезки. Работает и для списка, и для портрета —
 // внутри обоих размеры заданы в em, поэтому высота масштабируется линейно.
 function fitBlock() {
-  const wrap = stage.querySelector('.rows, .solo, .grid-groups');
+  const wrap = stage.querySelector('.rows, .solo, .grid-groups, .task-card');
   if (!wrap) return;
   // Сбрасываем прошлую подгонку, иначе после переезда окна на экран побольше
   // блок так и остался бы ужатым. Базовый кегль берём из CSS самого блока:
@@ -217,6 +217,26 @@ function startCounter(numEl, labelEl, opts) {
     }
   };
   counter.raf = requestAnimationFrame(step);
+}
+
+// Экран задания: что сейчас делают участники. Крупное название и описание,
+// которое ведущий заранее вписал в конкурс.
+function taskView(contest) {
+  const box = el('div', 'task-card');
+  if (!contest) {
+    box.appendChild(el('p', 'empty', 'Задание не выбрано'));
+    return box;
+  }
+  box.appendChild(el('div', 'task-label', 'Задание'));
+  box.appendChild(el('div', 'task-name', contest.name || 'Без названия'));
+  if (contest.description) {
+    const text = el('div', 'task-text');
+    for (const line of String(contest.description).split(/\n+/)) {
+      if (line.trim()) text.appendChild(el('p', null, line.trim()));
+    }
+    box.appendChild(text);
+  }
+  return box;
 }
 
 // Сетка тура: группы рядом, в каждой свои участники и баллы за тур.
@@ -369,6 +389,8 @@ function render() {
   } else if (d.mode === 'leaderboard') {
     stage.appendChild(el('h2', 'stage-title', 'Общий рейтинг'));
     stage.appendChild(rowsView(null));
+  } else if (d.mode === 'task') {
+    stage.appendChild(taskView(state.contests.find((c) => c.id === d.contestId)));
   } else if (d.mode === 'groups') {
     const round = MM.currentRound(state);
     stage.appendChild(el('h2', 'stage-title', round ? round.name : 'Турнир'));
@@ -430,23 +452,52 @@ function trackForContest(contestId) {
   return taskTracks[i % taskTracks.length];
 }
 
+// адрес файла: имена могут быть с пробелами, кириллицей и в подпапке
+const trackUrl = (file) => `music/tasks/${file.split('/').map(encodeURIComponent).join('/')}`;
+
+// Музыка звучит на всех экранах, а не только во время задания:
+//   ожидание        — свой файл standby.mp3;
+//   задание и итоги — трек этого конкурса (или «без музыки», если так выбрали);
+//   остальные       — трек текущего конкурса, иначе первый файл из папки,
+//                     а если музыки заданий нет совсем — заставка.
 function musicPlan(d) {
   const waiting = (d.sound && d.sound.music) || {};
   const task = (d.sound && d.sound.taskMusic) || {};
-  if (d.mode === 'standby') {
-    if (waiting.on === false) return {};
-    return { src: 'music/standby.mp3', volume: waiting.volume ?? 0.6 };
+  const standby = waiting.on === false
+    ? null
+    : { src: 'music/standby.mp3', volume: waiting.volume ?? 0.6 };
+
+  if (d.mode === 'standby') return standby || {};
+  if (task.on === false) return standby ? { ...standby, wantsTrack: true } : {};
+
+  const chosen = trackForContest(d.contestId);
+  if (d.mode === 'task' || d.mode === 'contest') {
+    // здесь выбор конкурса решает всё, включая «без музыки»
+    return chosen
+      ? { src: trackUrl(chosen), volume: task.volume ?? 0.5, wantsTrack: true }
+      : { wantsTrack: true };
   }
-  if (d.mode === 'contest' && task.on !== false) {
-    const file = trackForContest(d.contestId);
-    if (file) return { src: `music/tasks/${encodeURIComponent(file)}`, volume: task.volume ?? 0.5 };
-  }
-  return {};
+
+  const file = chosen || taskTracks[0] || null;
+  if (file) return { src: trackUrl(file), volume: task.volume ?? 0.5, wantsTrack: true };
+  return standby ? { ...standby, wantsTrack: true } : { wantsTrack: true };
 }
+
+let lastRescan = 0;
 
 function applyMusic() {
   if (PREVIEW || !state) return;
   const plan = musicPlan(state.display);
+
+  // Музыка нужна, а списка нет — значит, файлы положили уже после открытия окна.
+  // Перечитываем сами, чтобы не заставлять ведущего жать кнопку в пульте.
+  if (plan.wantsTrack && !taskTracks.length && Date.now() - lastRescan > 5000) {
+    lastRescan = Date.now();
+    loadTaskTracks().then(() => {
+      if (taskTracks.length) applyMusic();
+    });
+  }
+
   MMSound.music({ src: plan.src || null, on: !!plan.src, volume: plan.volume ?? 0.6 });
 }
 

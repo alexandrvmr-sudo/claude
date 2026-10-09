@@ -56,9 +56,10 @@ addEventListener('resize', fitPreview);
 // --- режимы экрана ---
 const MODES = [
   { id: 'standby', label: 'Ожидание' },
+  { id: 'task', label: 'Задание' },
   { id: 'groups', label: 'Сетка тура', tournamentOnly: true },
   { id: 'leaderboard', label: 'Общий рейтинг' },
-  { id: 'contest', label: 'Конкурс' },
+  { id: 'contest', label: 'Итоги конкурса' },
   { id: 'spotlight', label: 'Один участник' },
   { id: 'winner', label: 'Победитель' },
 ];
@@ -71,7 +72,7 @@ function renderModes() {
     if (state.display.mode === m.id) b.classList.add('is-active', 'btn-gold');
     b.addEventListener('click', () => {
       state.display.mode = m.id;
-      if (m.id === 'contest' && !state.display.contestId && state.contests[0]) {
+      if ((m.id === 'contest' || m.id === 'task') && !state.display.contestId && state.contests[0]) {
         state.display.contestId = state.contests[0].id;
       }
       if (m.id === 'spotlight' || m.id === 'winner') count().runId = 0;
@@ -86,7 +87,30 @@ function renderModes() {
   }
 
   const solo = state.display.mode === 'spotlight' || state.display.mode === 'winner';
-  $('#contest-picker').hidden = state.display.mode !== 'contest';
+  $('#contest-picker').hidden = !['contest', 'task'].includes(state.display.mode);
+
+  const nowTrack = $('#now-track');
+  if (nowTrack) {
+    const d = state.display;
+    const taskOn = (d.sound?.taskMusic?.on) !== false;
+    if (d.mode === 'standby') {
+      nowTrack.textContent = (d.sound?.music?.on) === false
+        ? 'Музыка ожидания выключена.'
+        : 'Играет музыка ожидания (public/music/standby.mp3).';
+    } else if (d.mode === 'task' || d.mode === 'contest') {
+      const file = trackForContest(d.contestId);
+      nowTrack.textContent = !taskOn ? 'Музыка заданий выключена в «Настройках».'
+        : file ? `Играет: ${file}`
+          : 'Музыки для этого конкурса нет: положите файлы в public/music/tasks.';
+    } else if (!taskOn) {
+      nowTrack.textContent = 'Музыка заданий выключена в «Настройках».';
+    } else {
+      const file = trackForContest(d.contestId) || taskTracks[0];
+      nowTrack.textContent = file
+        ? `Играет: ${file}`
+        : 'Играет музыка ожидания: файлов заданий в папке нет.';
+    }
+  }
   $('#person-picker').hidden = !solo;
   $('#count-box').hidden = !solo;
   $('#reveal-box').hidden = solo; // в режиме одного участника баллы начисляются счётчиком
@@ -449,8 +473,14 @@ function renderContests() {
     }
     row.appendChild(musicSelect(c));
 
-    const show = el('button', 'btn small', 'На экран');
+    const show = el('button', 'btn small btn-gold', 'Задание на экран');
     show.addEventListener('click', () => {
+      state.display.mode = 'task';
+      state.display.contestId = c.id;
+      push();
+    });
+    const results = el('button', 'btn small', 'Итоги на экран');
+    results.addEventListener('click', () => {
       state.display.mode = 'contest';
       state.display.contestId = c.id;
       push();
@@ -472,8 +502,25 @@ function renderContests() {
       if (state.display.contestId === c.id) state.display.contestId = null;
       push();
     });
-    row.append(show, up, del);
-    host.appendChild(row);
+    row.append(show, results, up, del);
+
+    const card = el('div', 'contest-card');
+    card.appendChild(row);
+
+    // описание задания — то, что увидят гости на экране
+    const about = el('textarea');
+    about.rows = 2;
+    about.placeholder = 'Описание задания: что делают участники. Покажется на экране под названием.';
+    about.value = c.description || '';
+    about.addEventListener('change', () => {
+      const text = about.value.trim();
+      if (text) c.description = text;
+      else delete c.description;
+      push();
+    });
+    card.appendChild(about);
+
+    host.appendChild(card);
   });
 }
 

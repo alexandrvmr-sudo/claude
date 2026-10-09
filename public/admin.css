@@ -116,8 +116,15 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .person .meta input { margin-bottom: 0.25rem; }
 .person .acts { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.25rem; }
 
-.contests { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; max-width: 42rem; }
-.contest { display: flex; gap: 0.5rem; align-items: center; background: var(--card-2); border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.5rem; }
+.contests { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; max-width: 52rem; }
+.contest-card { background: var(--card-2); border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.5rem; }
+.contest { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.contest-card textarea {
+  width: 100%; margin-top: 0.5rem; resize: vertical;
+  background: #0b1f23; color: var(--text); font: inherit; font-size: 0.9rem;
+  border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.45rem 0.6rem;
+}
+.contest-card textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .contest .num { color: var(--dim); min-width: 1.4rem; text-align: center; }
 
 .table-wrap { overflow: auto; }

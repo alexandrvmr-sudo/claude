@@ -212,6 +212,57 @@ const muted = await waitFor(`[...document.querySelectorAll('audio')].every((x) =
 ok('общий выключатель гасит музыку', muted === true);
 await post((st) => { st.display.sound.on = true; st.display.mode = 'leaderboard'; });
 
+// 8. музыка заданий: берётся из папки и раздаётся конкурсам по очереди
+const tasksDir = path.join(ROOT, 'public', 'music', 'tasks');
+const sample = path.join(ROOT, 'public', 'music', 'standby.mp3');
+const tmpTracks = ['__проверка 1.mp3', '__проверка 2.mp3'];
+const dropTmp = () => {
+  for (const f of tmpTracks) {
+    try { fs.unlinkSync(path.join(tasksDir, f)); } catch { /* уже нет */ }
+  }
+};
+process.on('exit', dropTmp);
+fs.mkdirSync(tasksDir, { recursive: true });
+for (const f of tmpTracks) fs.copyFileSync(sample, path.join(tasksDir, f));
+
+const listed = await (await fetch(`${APP}/api/music`)).json();
+ok('папка заданий читается', listed.ok && tmpTracks.every((f) => listed.tasks.includes(f)),
+  `нашлось ${listed.tasks.length}`);
+
+// просим экран перечитать папку и показываем первый конкурс
+await post((st) => {
+  st.display.sound.taskMusic = { on: true, volume: 0.5, scan: (st.display.sound.taskMusic?.scan || 0) + 1 };
+  st.display.mode = 'contest';
+  st.display.contestId = base.contests[0].id;
+});
+const first = await waitFor(`(() => {
+  const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+  return a ? decodeURIComponent(a.src) : '';
+})()`, `${APP}/music/tasks/${tmpTracks[0]}`, 10000);
+ok('у первого задания играет первый трек', first === `${APP}/music/tasks/${tmpTracks[0]}`, String(first));
+
+// второй конкурс получает следующий трек
+await post((st) => { st.display.contestId = base.contests[1].id; });
+const second = await waitFor(`(() => {
+  const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+  return a ? decodeURIComponent(a.src) : '';
+})()`, `${APP}/music/tasks/${tmpTracks[1]}`, 10000);
+ok('у второго задания — следующий трек', second === `${APP}/music/tasks/${tmpTracks[1]}`, String(second));
+
+// «без музыки» для конкурса
+await post((st) => {
+  st.contests[1].music = 'none';
+  st.display.contestId = base.contests[1].id;
+});
+const silent = await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 10000);
+ok('«без музыки» выключает трек задания', silent === true);
+
+// вне задания музыка не играет
+await post((st) => { st.display.mode = 'leaderboard'; });
+ok('вне задания тишина',
+  (await waitFor(`[...document.querySelectorAll('audio')].every((x) => x.paused)`, true, 8000)) === true);
+dropTmp();
+
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));

@@ -204,6 +204,18 @@
     </div>
     <p class="hint">Трек лежит в файле <code>public/music/standby.mp3</code> — замените его,
       чтобы поставить свою музыку. Короткая запись зацикливается с плавной склейкой.</p>
+
+    <h2 class="mt">Музыка заданий</h2>
+    <p class="hint">Положите свои файлы в папку <code>public/music/tasks</code> — программа
+      раздаст их конкурсам по очереди: первому конкурсу первый файл, второму второй и так далее.
+      Каждый трек зацикливается. Выбрать конкретный трек для конкурса можно на вкладке «Конкурсы».</p>
+    <label class="check"><input id="task-music-on" type="checkbox"> Музыка во время заданий</label>
+    <div class="field" style="max-width: 24rem; margin-top: 0.7rem;">
+      <label>Громкость музыки заданий: <span id="task-music-volume-value">50%</span></label>
+      <input id="task-music-volume" type="range" min="0" max="100" step="5">
+    </div>
+    <button id="task-music-scan" class="btn">Перечитать папку</button>
+    <p class="hint" id="task-music-found">—</p>
     <button id="sound-test" class="btn" style="margin-top: 0.8rem;">Проверить звук на телевизоре</button>
     <h2 class="mt">Опасная зона</h2>
     <button id="clear-scores" class="btn">Обнулить все баллы</button>

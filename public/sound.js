@@ -101,7 +101,9 @@ window.MMSound = (() => {
   };
 
   // --- музыка ---
-  const MUSIC_SRC = 'music/standby.mp3';
+  // Один движок на всю музыку: и заставка, и треки заданий. Короткая запись
+  // зацикливается двумя проигрывателями с плавной склейкой, а смена трека
+  // идёт через затухание, чтобы в эфире не было рывка.
   const CROSSFADE = 1.4; // секунд на склейку петли
   const PRESTART = 0.8; // за сколько до склейки будить второй проигрыватель
   let music = null;
@@ -109,19 +111,44 @@ window.MMSound = (() => {
   function ensureMusic() {
     if (music) return music;
     const make = () => {
-      const el = new Audio(MUSIC_SRC);
+      const el = new Audio();
       el.preload = 'auto';
       el.volume = 0;
       el.hidden = true;
       document.body.appendChild(el); // в документе — чтобы браузер вёл себя предсказуемо
       return el;
     };
-    music = { els: [make(), make()], active: 0, want: 0, gain: 0, timer: 0 };
+    music = {
+      els: [make(), make()],
+      active: 0,
+      want: 0, // к какой громкости идём сейчас
+      gain: 0, // текущая громкость
+      timer: 0,
+      src: null, // что играет
+      nextSrc: null, // на что переключаемся, когда затухнем
+      nextWant: 0,
+    };
     return music;
+  }
+
+  function applySrc(src) {
+    const m = music;
+    for (const el of m.els) {
+      el.pause();
+      el.volume = 0;
+      if (el.getAttribute('src') !== src) {
+        el.src = src;
+        el.load();
+      }
+      el.currentTime = 0;
+    }
+    m.active = 0;
+    m.src = src;
   }
 
   function start() {
     const m = music;
+    if (!m.src) return;
     const el = m.els[m.active];
     if (el.paused) el.play().catch(() => { /* браузер ещё не разрешил звук */ });
   }
@@ -129,6 +156,7 @@ window.MMSound = (() => {
   function tickMusic() {
     const m = music;
     if (!m) return;
+
     // плавно появляемся и затухаем, примерно за секунду
     const step = 0.04;
     if (m.gain < m.want) m.gain = Math.min(m.want, m.gain + step);
@@ -138,6 +166,14 @@ window.MMSound = (() => {
       for (const el of m.els) {
         if (!el.paused) el.pause();
         el.volume = 0;
+      }
+      // затухли ради смены трека — ставим новый и поднимаемся обратно
+      if (m.nextSrc) {
+        applySrc(m.nextSrc);
+        m.nextSrc = null;
+        m.want = m.nextWant;
+        start();
+        return;
       }
       clearInterval(m.timer);
       m.timer = 0;
@@ -225,15 +261,32 @@ window.MMSound = (() => {
       };
     },
 
-    // --- музыка на экране ожидания ---
-    // Трек короткий, поэтому зацикливаем его двумя проигрывателями с плавной
-    // склейкой: иначе на стыке слышен щелчок.
-    music({ on, volume = 0.6 } = {}) {
-      const want = on && settings.on ? Math.max(0, Math.min(1, volume)) : 0;
-      if (!music && !want) return; // нечего включать и нечего гасить
+    // Что играет сейчас: src — адрес файла, пусто — тишина.
+    // Смена трека идёт через затухание, громкость меняется на лету.
+    music({ src = null, on = true, volume = 0.6 } = {}) {
+      const target = on && settings.on && src ? Math.max(0, Math.min(1, volume)) : 0;
+      if (!music && !target) return; // нечего включать и нечего гасить
       const m = ensureMusic();
-      m.want = want;
-      if (want) start();
+      m.nextWant = target;
+
+      if (!target) {
+        m.want = 0;
+        m.nextSrc = null;
+      } else if (src !== m.src) {
+        if (m.gain > 0) {
+          m.nextSrc = src; // сначала затухнем, потом поставим новый
+          m.want = 0;
+        } else {
+          applySrc(src);
+          m.want = target;
+          start();
+        }
+      } else {
+        m.want = target;
+        m.nextSrc = null;
+        start();
+      }
+
       if (!m.timer) m.timer = setInterval(tickMusic, 40);
     },
 

@@ -341,8 +341,12 @@ function render() {
   if (!firstRender && d.mode !== prevMode) sound(d.mode === 'winner' ? 'fanfare' : 'whoosh');
   if (!firstRender && (d.sound?.testId || 0) !== prevTestId) sound('strike');
   if (!PREVIEW) {
-    const m = (d.sound && d.sound.music) || {};
-    MMSound.music({ on: d.mode === 'standby' && m.on !== false, volume: m.volume ?? 0.6 });
+    const scan = (d.sound && d.sound.taskMusic && d.sound.taskMusic.scan) || 0;
+    if (scan !== musicScan) { // пульт попросил перечитать папку
+      musicScan = scan;
+      loadTaskTracks().then(applyMusic);
+    }
+    applyMusic();
   }
 
   // подпись внизу ставим до перерисовки сцены: она меняет высоту,
@@ -399,6 +403,54 @@ function render() {
 // пересчитываем посадку: от этого зависят высоты строк.
 addEventListener('resize', fitBlock);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitBlock);
+
+// --- музыка ---
+// Заставка играет свой файл, у каждого задания — свой трек из public/music/tasks.
+let taskTracks = [];
+let musicScan = 0;
+
+async function loadTaskTracks() {
+  try {
+    const data = await (await fetch('/api/music')).json();
+    taskTracks = data.tasks || [];
+  } catch {
+    taskTracks = [];
+  }
+}
+
+// Трек конкурса: выбранный вручную, «без музыки» или следующий по очереди.
+// По очереди — чтобы соседние задания звучали по-разному без лишней возни.
+function trackForContest(contestId) {
+  if (!taskTracks.length) return null;
+  const i = state.contests.findIndex((x) => x.id === contestId);
+  if (i < 0) return null;
+  const chosen = state.contests[i].music;
+  if (chosen === 'none') return null;
+  if (chosen && taskTracks.includes(chosen)) return chosen;
+  return taskTracks[i % taskTracks.length];
+}
+
+function musicPlan(d) {
+  const waiting = (d.sound && d.sound.music) || {};
+  const task = (d.sound && d.sound.taskMusic) || {};
+  if (d.mode === 'standby') {
+    if (waiting.on === false) return {};
+    return { src: 'music/standby.mp3', volume: waiting.volume ?? 0.6 };
+  }
+  if (d.mode === 'contest' && task.on !== false) {
+    const file = trackForContest(d.contestId);
+    if (file) return { src: `music/tasks/${encodeURIComponent(file)}`, volume: task.volume ?? 0.5 };
+  }
+  return {};
+}
+
+function applyMusic() {
+  if (PREVIEW || !state) return;
+  const plan = musicPlan(state.display);
+  MMSound.music({ src: plan.src || null, on: !!plan.src, volume: plan.volume ?? 0.6 });
+}
+
+if (!PREVIEW) loadTaskTracks().then(applyMusic);
 
 // --- звук ---
 // Браузер запрещает звук до первого действия пользователя: ловим любое

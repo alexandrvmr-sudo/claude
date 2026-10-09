@@ -443,6 +443,12 @@ function renderContests() {
     input.addEventListener('change', () => { c.name = input.value.trim(); push(); });
     row.appendChild(input);
 
+    if (c.roundId) {
+      const round = MM.tour(state).rounds.find((r) => r.id === c.roundId);
+      row.appendChild(el('div', 'meta', round ? round.name : 'тур'));
+    }
+    row.appendChild(musicSelect(c));
+
     const show = el('button', 'btn small', 'На экран');
     show.addEventListener('click', () => {
       state.display.mode = 'contest';
@@ -555,6 +561,56 @@ function renderTotalsOnly() {
       ? MM.roundScore(state, people[i - 1].id, round.id)
       : MM.total(state, people[i - 1].id));
   }
+}
+
+// --- музыка заданий ---
+// Файлы лежат в папке public/music/tasks, программа читает её сама.
+let taskTracks = [];
+
+async function loadTaskTracks() {
+  try {
+    const data = await (await fetch('/api/music')).json();
+    taskTracks = data.tasks || [];
+  } catch {
+    taskTracks = [];
+  }
+}
+
+// Какой трек достанется конкурсу: тот же расчёт, что и на экране.
+function trackForContest(contestId) {
+  if (!taskTracks.length) return null;
+  const i = state.contests.findIndex((x) => x.id === contestId);
+  if (i < 0) return null;
+  const chosen = state.contests[i].music;
+  if (chosen === 'none') return null;
+  if (chosen && taskTracks.includes(chosen)) return chosen;
+  return taskTracks[i % taskTracks.length];
+}
+
+// Выпадающий список выбора трека для конкурса
+function musicSelect(contest) {
+  const sel = el('select');
+  sel.title = 'Музыка задания';
+  const auto = el('option', null, taskTracks.length
+    ? `Авто: ${trackForContest(contest.id) || 'нет файлов'}`
+    : 'Авто (нет файлов)');
+  auto.value = '';
+  sel.appendChild(auto);
+  for (const f of taskTracks) {
+    const o = el('option', null, f);
+    o.value = f;
+    sel.appendChild(o);
+  }
+  const none = el('option', null, 'Без музыки');
+  none.value = 'none';
+  sel.appendChild(none);
+  sel.value = contest.music || '';
+  sel.addEventListener('change', () => {
+    if (sel.value) contest.music = sel.value;
+    else delete contest.music;
+    push();
+  });
+  return sel;
 }
 
 // --- турнир ---
@@ -977,6 +1033,7 @@ $('#show-rename').addEventListener('click', async () => {
 function soundCfg() {
   state.display.sound = state.display.sound || { on: true, volume: 0.7, testId: 0 };
   state.display.sound.music = state.display.sound.music || { on: true, volume: 0.6 };
+  state.display.sound.taskMusic = state.display.sound.taskMusic || { on: true, volume: 0.5, scan: 0 };
   return state.display.sound;
 }
 
@@ -989,6 +1046,14 @@ function renderSound() {
   $('#music-on').checked = music.on !== false;
   $('#music-volume').value = String(Math.round((music.volume ?? 0.6) * 100));
   $('#music-volume-value').textContent = `${Math.round((music.volume ?? 0.6) * 100)}%`;
+
+  const task = snd.taskMusic || { on: true, volume: 0.5 };
+  $('#task-music-on').checked = task.on !== false;
+  $('#task-music-volume').value = String(Math.round((task.volume ?? 0.5) * 100));
+  $('#task-music-volume-value').textContent = `${Math.round((task.volume ?? 0.5) * 100)}%`;
+  $('#task-music-found').textContent = taskTracks.length
+    ? `Найдено файлов: ${taskTracks.length} — ${taskTracks.join(', ')}`
+    : 'Файлов пока нет: скопируйте их в папку public/music/tasks и нажмите «Перечитать папку».';
   const btn = $('#mute-toggle');
   btn.textContent = snd.on !== false ? 'Звук вкл.' : 'Звук выкл.';
   btn.classList.toggle('is-off', snd.on === false);
@@ -997,6 +1062,17 @@ function renderSound() {
 $('#sound-on').addEventListener('change', (e) => { soundCfg().on = e.target.checked; push(); });
 $('#mute-toggle').addEventListener('click', () => { soundCfg().on = soundCfg().on === false; push(); });
 $('#music-on').addEventListener('change', (e) => { soundCfg().music.on = e.target.checked; push(); });
+$('#task-music-on').addEventListener('change', (e) => { soundCfg().taskMusic.on = e.target.checked; push(); });
+$('#task-music-volume').addEventListener('input', (e) => {
+  soundCfg().taskMusic.volume = Number(e.target.value) / 100;
+  $('#task-music-volume-value').textContent = `${e.target.value}%`;
+  pushQuiet();
+});
+$('#task-music-scan').addEventListener('click', async () => {
+  await loadTaskTracks();
+  soundCfg().taskMusic.scan = (soundCfg().taskMusic.scan || 0) + 1; // экран тоже перечитает
+  push();
+});
 $('#music-volume').addEventListener('input', (e) => {
   soundCfg().music.volume = Number(e.target.value) / 100;
   $('#music-volume-value').textContent = `${e.target.value}%`;
@@ -1090,7 +1166,10 @@ function connect() {
     const firstTime = !state;
     state = incoming;
     render();
-    if (firstTime) renderShows();
+    if (firstTime) {
+      renderShows();
+      loadTaskTracks().then(render);
+    }
   });
   es.onerror = () => {
     conn.textContent = 'нет связи';

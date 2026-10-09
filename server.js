@@ -78,6 +78,8 @@ function defaultDisplay() {
       testId: 0, // пульт увеличивает — экран проигрывает пробный звук
       // музыка на экране ожидания, файл public/music/standby.mp3
       music: { on: true, volume: 0.6 },
+      // музыка заданий: файлы из public/music/tasks, раздаются конкурсам по очереди
+      taskMusic: { on: true, volume: 0.5, scan: 0 },
     },
     // режим «объявление результата»: баллы накручиваются от нуля
     count: {
@@ -214,6 +216,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display.count = { ...base.display.count, ...(parsed.display?.count || {}) };
       state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
       state.display.sound.music = { ...base.display.sound.music, ...(parsed.display?.sound?.music || {}) };
+      state.display.sound.taskMusic = { ...base.display.sound.taskMusic, ...(parsed.display?.sound?.taskMusic || {}) };
       state.tournament = { ...base.tournament, ...(parsed.tournament || {}) };
       console.log('Состояние загружено');
     } catch {
@@ -440,6 +443,17 @@ export async function startServer({ dataDir, port, host } = {}) {
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });
       }
+    }
+
+    // Список музыки для заданий: что лежит в public/music/tasks
+    if (pathname === '/api/music' && req.method === 'GET') {
+      let tasks = [];
+      try {
+        tasks = (await fsp.readdir(path.join(PUBLIC_DIR, 'music', 'tasks')))
+          .filter((f) => /\.(mp3|m4a|ogg|wav|aac)$/i.test(f))
+          .sort((a, b) => a.localeCompare(b, 'ru'));
+      } catch { /* папки нет — значит, музыки заданий нет */ }
+      return sendJson(res, 200, { ok: true, tasks });
     }
 
     // Загрузка фото: dataURL -> файл на диске

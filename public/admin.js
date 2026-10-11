@@ -62,6 +62,7 @@ const MODES = [
   { id: 'contest', label: 'Итоги конкурса' },
   { id: 'spotlight', label: 'Один участник' },
   { id: 'winner', label: 'Победитель' },
+  { id: 'prophecy', label: 'Предсказание' },
 ];
 
 function renderModes() {
@@ -93,7 +94,7 @@ function renderModes() {
   if (nowTrack) {
     const d = state.display;
     const taskOn = (d.sound?.taskMusic?.on) !== false;
-    if (d.mode === 'standby') {
+    if (d.mode === 'standby' || d.mode === 'prophecy') {
       nowTrack.textContent = (d.sound?.music?.on) === false
         ? 'Музыка ожидания выключена.'
         : 'Играет музыка ожидания (public/music/standby.mp3).';
@@ -1081,8 +1082,174 @@ function soundCfg() {
   state.display.sound = state.display.sound || { on: true, volume: 0.7, testId: 0 };
   state.display.sound.music = state.display.sound.music || { on: true, volume: 0.6 };
   state.display.sound.taskMusic = state.display.sound.taskMusic || { on: true, volume: 0.5, scan: 0 };
+  state.display.sound.voice = state.display.sound.voice || { on: true, volume: 1, name: '' };
   return state.display.sound;
 }
+
+// --- голос зеркала ---
+// Текст синтезирует сервер (системный голос), искажает его уже окно зеркала.
+let voiceInfo = { engine: null, ru: false, voices: [] };
+
+async function loadVoices() {
+  try {
+    const r = await fetch('/api/voice');
+    const data = await r.json();
+    if (data.ok) voiceInfo = data;
+  } catch { /* сервер ответит позже */ }
+}
+
+function voiceEngineText() {
+  if (!voiceInfo.engine) {
+    return 'Системный синтезатор не найден — зеркало прочитает текст голосом браузера.'
+      + ' Это тоже работает, но звучит скромнее.';
+  }
+  if (!voiceInfo.ru) {
+    return `Синтезатор найден (${voiceInfo.engine}), но русского голоса в системе нет:`
+      + ' установите его в настройках системы, иначе русский текст прочтётся с акцентом.';
+  }
+  return `Синтезатор: ${voiceInfo.engine}. Русский голос есть — всё готово.`;
+}
+
+// Просим зеркало прочитать текст: сначала готовим wav, потом двигаем runId.
+async function speak(text) {
+  const clean = String(text || '').trim();
+  const sp = state.display.speech || { runId: 0 };
+  if (!clean) return;
+  let url = '';
+  try {
+    const r = await fetch('/api/voice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean, voice: soundCfg().voice.name || '' }),
+    });
+    const data = await r.json();
+    if (data.ok) url = data.url;
+  } catch { /* обойдёмся голосом браузера */ }
+  state.display.speech = { runId: (sp.runId || 0) + 1, text: clean, url };
+  push();
+}
+
+function taskSpeechText() {
+  const d = state.display;
+  if (d.mode === 'prophecy') return (d.prophecy && d.prophecy.text) || '';
+  const c = state.contests.find((x) => x.id === d.contestId);
+  if (!c) return '';
+  const name = (c.name || '').trim();
+  const desc = (c.description || '').trim();
+  return [name, desc].filter(Boolean).join('. ');
+}
+
+function renderVoice() {
+  const v = soundCfg().voice;
+  $('#voice-on').checked = v.on !== false;
+  $('#voice-volume').value = String(Math.round((v.volume ?? 1) * 100));
+  $('#voice-volume-value').textContent = `${Math.round((v.volume ?? 1) * 100)}%`;
+  $('#voice-engine').textContent = voiceEngineText();
+
+  const sel = $('#voice-name');
+  sel.innerHTML = '';
+  const auto = el('option', null, voiceInfo.voices.length ? 'Выбрать автоматически' : 'Голосов нет');
+  auto.value = '';
+  sel.appendChild(auto);
+  for (const item of voiceInfo.voices) {
+    const o = el('option', null, item.lang ? `${item.name} (${item.lang})` : item.name);
+    o.value = item.id;
+    if (item.id === v.name) o.selected = true;
+    sel.appendChild(o);
+  }
+
+  const now = $('#voice-now');
+  if (now) {
+    const text = taskSpeechText();
+    now.textContent = v.on === false ? 'Голос выключен в «Настройках».'
+      : text ? `Прочитает: «${text.length > 90 ? `${text.slice(0, 90)}…` : text}»`
+        : 'Нечего читать: выберите конкурс и впишите описание задания на вкладке «Конкурсы».';
+  }
+}
+
+$('#voice-on').addEventListener('change', (e) => { soundCfg().voice.on = e.target.checked; push(); });
+$('#voice-name').addEventListener('change', (e) => { soundCfg().voice.name = e.target.value; push(); });
+$('#voice-volume').addEventListener('input', (e) => {
+  soundCfg().voice.volume = Number(e.target.value) / 100;
+  $('#voice-volume-value').textContent = `${e.target.value}%`;
+  pushQuiet();
+});
+$('#voice-test').addEventListener('click', () => speak('Зеркало слышит тебя. Говори.'));
+$('#speak-task').addEventListener('click', () => speak(taskSpeechText()));
+$('#speak-stop').addEventListener('click', () => {
+  const sp = state.display.speech || { runId: 0 };
+  state.display.speech = { runId: (sp.runId || 0) + 1, text: '', url: '' };
+  push();
+});
+
+// --- предсказания ---
+function proph() {
+  state.prophecies = state.prophecies || { list: [], used: [] };
+  if (!Array.isArray(state.prophecies.list)) state.prophecies.list = [];
+  if (!Array.isArray(state.prophecies.used)) state.prophecies.used = [];
+  return state.prophecies;
+}
+
+function prophecyPool() {
+  const p = proph();
+  const list = p.list.map((t) => String(t).trim()).filter(Boolean);
+  const used = new Set(p.used);
+  const fresh = list.filter((t) => !used.has(t));
+  return { list, fresh };
+}
+
+function renderProphecy() {
+  const p = proph();
+  const { list, fresh } = prophecyPool();
+  const area = $('#prophecy-list');
+  if (document.activeElement !== area) area.value = p.list.join('\n');
+  $('#prophecy-who').placeholder = 'Например: Ирина';
+  $('#prophecy-status').textContent = list.length
+    ? `В списке ${list.length}, осталось нетронутых — ${fresh.length}.`
+    : 'Список пуст: впишите предсказания ниже или верните заготовки.';
+  const cur = state.display.prophecy || {};
+  $('#prophecy-current').textContent = cur.text
+    ? `На экране: ${cur.who ? `${cur.who} — ` : ''}«${cur.text}»`
+    : '';
+}
+
+$('#prophecy-save').addEventListener('click', () => {
+  proph().list = $('#prophecy-list').value.split('\n').map((t) => t.trim()).filter(Boolean);
+  proph().used = proph().used.filter((t) => proph().list.includes(t));
+  push();
+});
+
+$('#prophecy-default').addEventListener('click', async () => {
+  if (!confirm('Вернуть заготовленные предсказания? Ваш список будет заменён.')) return;
+  const r = await fetch('/api/prophecies/default');
+  const data = await r.json();
+  if (!data.ok) return;
+  proph().list = data.list;
+  proph().used = [];
+  push();
+});
+
+$('#prophecy-reset').addEventListener('click', () => { proph().used = []; push(); });
+
+$('#prophecy-draw').addEventListener('click', async () => {
+  const { list, fresh } = prophecyPool();
+  if (!list.length) { alert('Список предсказаний пуст.'); return; }
+  let pool = fresh;
+  if (!pool.length) { proph().used = []; pool = list; } // круг замкнулся — начинаем заново
+  const text = pool[Math.floor(Math.random() * pool.length)];
+  proph().used.push(text);
+  state.display.mode = 'prophecy';
+  state.display.prophecy = { text, who: $('#prophecy-who').value.trim() };
+  push(); // сначала текст на экране, голос — следом
+  await speak(text);
+});
+
+$('#prophecy-again').addEventListener('click', () => {
+  const cur = state.display.prophecy || {};
+  if (!cur.text) { alert('Сначала вытяните предсказание.'); return; }
+  state.display.mode = 'prophecy';
+  speak(cur.text);
+});
 
 function renderSound() {
   const snd = soundCfg();
@@ -1196,6 +1363,8 @@ function render() {
   $('#set-title').value = state.settings.title || '';
   $('#set-subtitle').value = state.settings.subtitle || '';
   renderSound();
+  renderVoice();
+  renderProphecy();
   renderTournament();
   const title = state.showName || 'шоу не выбрано';
   $('#brand-show').textContent = title;
@@ -1216,6 +1385,7 @@ function connect() {
     if (firstTime) {
       renderShows();
       loadTaskTracks().then(render);
+      loadVoices().then(renderVoice);
     }
   });
   es.onerror = () => {

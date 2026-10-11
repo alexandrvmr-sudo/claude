@@ -29,6 +29,7 @@
   <button class="tab" data-tab="tournament">Турнир</button>
   <button class="tab" data-tab="contests">Конкурсы</button>
   <button class="tab" data-tab="scores">Баллы</button>
+  <button class="tab" data-tab="prophecy">Предсказания</button>
   <button class="tab" data-tab="settings">Настройки</button>
 </nav>
 
@@ -67,6 +68,12 @@
           <select id="mode-contest"></select>
         </div>
         <p class="hint" id="now-track">—</p>
+
+        <div class="voice-row">
+          <button id="speak-task" class="btn">Озвучить задание</button>
+          <button id="speak-stop" class="btn">Замолчать</button>
+        </div>
+        <p class="hint" id="voice-now">—</p>
 
         <div class="field" id="person-picker" hidden>
           <label>Участник на экране</label>
@@ -184,6 +191,32 @@
     <div class="table-wrap"><table id="score-table"></table></div>
   </section>
 
+  <!-- ПРЕДСКАЗАНИЯ -->
+  <section class="panel" data-panel="prophecy" hidden>
+    <h2>Предсказания гостям</h2>
+    <p class="hint">Финал игры: зеркало вытягивает случайное предсказание и зачитывает его голосом.
+      Одно и то же предсказание дважды не выпадет, пока не закончится список.</p>
+    <div class="field" style="max-width: 24rem;">
+      <label>Кому предсказание (необязательно)</label>
+      <input id="prophecy-who" type="text" placeholder="Например: Ирина">
+    </div>
+    <div class="reveal-actions">
+      <button id="prophecy-draw" class="btn btn-gold big">Вытянуть предсказание</button>
+      <button id="prophecy-again" class="btn">Прочитать снова</button>
+      <button id="prophecy-reset" class="btn">Сбросить использованные</button>
+    </div>
+    <p class="hint" id="prophecy-status">—</p>
+    <p class="hint" id="prophecy-current"></p>
+
+    <h2 class="mt">Список предсказаний</h2>
+    <p class="hint">Одно предсказание на строку. Можно стереть всё и написать свои.</p>
+    <textarea id="prophecy-list" rows="14" class="area"></textarea>
+    <div class="reveal-actions">
+      <button id="prophecy-save" class="btn btn-gold">Сохранить список</button>
+      <button id="prophecy-default" class="btn">Вернуть заготовки</button>
+    </div>
+  </section>
+
   <!-- НАСТРОЙКИ -->
   <section class="panel" data-panel="settings" hidden>
     <h2>Оформление</h2>
@@ -218,6 +251,21 @@
     </div>
     <button id="task-music-scan" class="btn">Перечитать папку</button>
     <p class="hint" id="task-music-found">—</p>
+    <h2 class="mt">Голос зеркала</h2>
+    <p class="hint">Голос читает задания и предсказания: мужской, искажённый — как у «анонимуса».
+      Он собирается из системного синтезатора речи, поэтому отдельных файлов не нужно.</p>
+    <label class="check"><input id="voice-on" type="checkbox"> Голос включён</label>
+    <div class="field" style="max-width: 24rem; margin-top: 0.7rem;">
+      <label>Громкость голоса: <span id="voice-volume-value">100%</span></label>
+      <input id="voice-volume" type="range" min="0" max="100" step="5">
+    </div>
+    <div class="field" style="max-width: 24rem;">
+      <label>Системный голос</label>
+      <select id="voice-name"></select>
+    </div>
+    <button id="voice-test" class="btn">Проверить голос</button>
+    <p class="hint" id="voice-engine">—</p>
+
     <button id="sound-test" class="btn" style="margin-top: 0.8rem;">Проверить звук на телевизоре</button>
     <h2 class="mt">Опасная зона</h2>
     <button id="clear-scores" class="btn">Обнулить все баллы</button>

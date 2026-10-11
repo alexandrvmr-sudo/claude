@@ -122,6 +122,7 @@ window.MMSound = (() => {
       els: [make(), make()],
       active: 0,
       want: 0, // к какой громкости идём сейчас
+      duck: 1, // 1 — обычно, меньше — пока говорит голос
       gain: 0, // текущая громкость
       timer: 0,
       src: null, // что играет
@@ -198,8 +199,9 @@ window.MMSound = (() => {
       }
     }
 
-    cur.volume = m.gain * mix;
-    other.volume = m.gain * (1 - mix);
+    const duck = m.duck ?? 1; // во время речи музыку приглушаем
+    cur.volume = m.gain * duck * mix;
+    other.volume = m.gain * duck * (1 - mix);
 
     // старый проигрыватель доиграл — меняем их местами
     if (cur.ended || (Number.isFinite(dur) && cur.currentTime >= dur - 0.05)) {
@@ -208,6 +210,98 @@ window.MMSound = (() => {
       cur.volume = 0;
       m.active = 1 - m.active;
     }
+  }
+
+  // --- голос ---
+  // Обычный синтезированный wav прогоняем через цепочку: ниже тон, кольцевая
+  // модуляция, лёгкая грязь и короткий металлический хвост. Получается тот самый
+  // искажённый голос «анонимуса».
+  let voiceNodes = null;
+
+  function distortionCurve(amount) {
+    const n = 1024;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      const x = (i * 2) / n - 1;
+      curve[i] = ((1 + amount) * x) / (1 + amount * Math.abs(x));
+    }
+    return curve;
+  }
+
+  function impulse(seconds, decay) {
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch += 1) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i += 1) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / len) ** decay;
+      }
+    }
+    return buf;
+  }
+
+  function duck(on) {
+    if (music) music.duck = on ? 0.25 : 1;
+  }
+
+  function stopVoice() {
+    if (!voiceNodes) return;
+    try { voiceNodes.src.stop(); } catch { /* уже закончил */ }
+    try { voiceNodes.lfo.stop(); } catch { /* уже закончил */ }
+    voiceNodes = null;
+    duck(false);
+  }
+
+  function playVoiceBuffer(buffer, volume, onEnd) {
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = 0.82; // ниже и чуть медленнее
+
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = distortionCurve(14);
+    shaper.oversample = '2x';
+
+    // кольцевая модуляция — то самое «роботизированное» дрожание
+    const ring = ctx.createGain();
+    ring.gain.value = 0.62;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 33;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.38;
+    lfo.connect(lfoDepth).connect(ring.gain);
+
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 110;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 3600;
+
+    const dry = ctx.createGain();
+    dry.gain.value = 0.85;
+    const wet = ctx.createGain();
+    wet.gain.value = 0.3;
+    const verb = ctx.createConvolver();
+    verb.buffer = impulse(1.1, 3.2);
+
+    const out = ctx.createGain();
+    out.gain.value = Math.max(0, Math.min(1.5, volume));
+
+    src.connect(shaper).connect(ring).connect(hp).connect(lp);
+    lp.connect(dry).connect(out);
+    lp.connect(verb).connect(wet).connect(out);
+    out.connect(master);
+
+    lfo.start();
+    src.start();
+    voiceNodes = { src, lfo };
+    src.onended = () => {
+      if (voiceNodes && voiceNodes.src === src) voiceNodes = null;
+      try { lfo.stop(); } catch { /* уже остановлен */ }
+      duck(false);
+      if (onEnd) onEnd();
+    };
   }
 
   return {
@@ -288,6 +382,52 @@ window.MMSound = (() => {
       }
 
       if (!m.timer) m.timer = setInterval(tickMusic, 40);
+    },
+
+    // Произнести текст. url — готовый wav от сервера (его искажаем),
+    // text — запасной вариант через голос браузера, если синтезатора нет.
+    async speak({ url, text, volume = 1 }) {
+      if (!settings.on) return false;
+      stopVoice();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+      if (url && ensure() && ctx.state === 'running') {
+        try {
+          const data = await (await fetch(url)).arrayBuffer();
+          const buffer = await ctx.decodeAudioData(data);
+          duck(true);
+          playVoiceBuffer(buffer, volume);
+          return true;
+        } catch { /* не вышло — читаем браузерным голосом */ }
+      }
+
+      if (text && window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'ru-RU';
+        u.pitch = 0.4; // ниже, чтобы звучало мрачнее
+        u.rate = 0.92;
+        u.volume = Math.max(0, Math.min(1, volume));
+        const ru = speechSynthesis.getVoices().find((v) => /ru/i.test(v.lang));
+        if (ru) u.voice = ru;
+        duck(true);
+        u.onend = () => duck(false);
+        u.onerror = () => duck(false);
+        speechSynthesis.speak(u);
+        return true;
+      }
+      duck(false);
+      return false;
+    },
+
+    // говорит ли зеркало прямо сейчас (нужно автотесту и подсказкам)
+    speaking() {
+      return !!voiceNodes || !!(window.speechSynthesis && window.speechSynthesis.speaking);
+    },
+
+    stopSpeech() {
+      stopVoice();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      duck(false);
     },
 
     // звук разрешили позже — пробуем доиграть

@@ -13,6 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -41,6 +42,34 @@ function id(prefix = 'x') {
 }
 
 // Содержимое шоу — то, что готовится заранее и сохраняется в библиотеку.
+// Заготовки предсказаний: добрые и обтекаемые, как и положено в эфире.
+const DEFAULT_PROPHECIES = [
+  'В ближайшие три месяца к вам вернётся человек, о котором вы думали вчера.',
+  'Дом, в котором вы выросли, ещё раз сыграет в вашей судьбе важную роль.',
+  'Вы держите в руках ключ от двери, которую пока боитесь открыть.',
+  'Деньги придут оттуда, откуда вы их не ждёте, и уйдут туда, куда давно собирались.',
+  'Рядом с вами человек, который знает о вас больше, чем говорит. Он желает добра.',
+  'Ваша главная удача начнётся с отказа. Не бойтесь сказать «нет».',
+  'Через сорок дней вам приснится сон, который стоит записать.',
+  'У вас есть дар, который вы считаете пустяком. Именно он приведёт вас к людям.',
+  'Старая обида держит вас крепче, чем кажется. Отпустите — и дорога откроется.',
+  'Дорога, которой вы боитесь, окажется короче, чем вы думали.',
+  'Вода принесёт вам весть: письмо, звонок или встречу у реки.',
+  'Вы встретите человека с именем вашего первого учителя. Прислушайтесь к нему.',
+  'Зеркало видит: вы давно носите чужую вину. Она не ваша — оставьте её.',
+  'В вашем доме есть вещь, которую пора отдать. С ней уйдёт и тяжесть.',
+  'Ваш следующий шаг будет верным, даже если все вокруг скажут обратное.',
+  'Скоро придётся выбирать между покоем и правдой. Выберите правду.',
+  'Тот, кто ушёл, помнит о вас и не держит зла.',
+  'Число семь будет сопровождать вас всю зиму.',
+  'Вы ищете ответ далеко, а он лежит в ящике вашего стола.',
+  'Человек в тёмной одежде принесёт вам хорошую новость.',
+  'Осенью вы окажетесь там, где никогда не были, и почувствуете себя дома.',
+  'Вы простите себя раньше, чем думаете. И это изменит всё.',
+  'Свет, который вы ищете, уже горит — просто вы стоите к нему спиной.',
+  'Разговор, которого вы избегаете, принесёт облегчение обоим.',
+];
+
 function defaultShow() {
   return {
     settings: { title: 'Битва сильнейших', subtitle: 'Волшебное зеркало' },
@@ -51,6 +80,8 @@ function defaultShow() {
     ],
     participants: [],
     scores: {}, // scores[participantId][contestId] = число или null
+    // Предсказания гостям: зачитываются голосом в конце игры
+    prophecies: { list: [...DEFAULT_PROPHECIES], used: [] },
     // Турнир: участники сражаются группами, из каждой группы проходят лучшие.
     // Конкурсы тура помечены roundId, вне турнира это поле пустое.
     tournament: {
@@ -80,7 +111,13 @@ function defaultDisplay() {
       music: { on: true, volume: 0.6 },
       // музыка заданий: файлы из public/music/tasks, раздаются конкурсам по очереди
       taskMusic: { on: true, volume: 0.5, scan: 0 },
+      // голос зеркала: читает задания и предсказания
+      voice: { on: true, volume: 1, name: '' },
     },
+    // что зачитать голосом: пульт присылает текст и увеличивает runId
+    speech: { runId: 0, text: '', url: '' },
+    // предсказание на экране
+    prophecy: { text: '', who: '' },
     // режим «объявление результата»: баллы накручиваются от нуля
     count: {
       source: 'total', // 'total' или id конкурса
@@ -152,6 +189,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       participants: state.participants,
       scores: state.scores,
       tournament: state.tournament,
+      prophecies: state.prophecies,
     };
   }
 
@@ -203,6 +241,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       ...parsed.show,
       // шоу, сохранённые до появления турнира, не знают про это поле
       tournament: { ...base.tournament, ...(parsed.show.tournament || {}) },
+      prophecies: { ...base.prophecies, ...(parsed.show.prophecies || {}) },
       display: { ...defaultDisplay(), sound },
     };
   }
@@ -217,7 +256,11 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
       state.display.sound.music = { ...base.display.sound.music, ...(parsed.display?.sound?.music || {}) };
       state.display.sound.taskMusic = { ...base.display.sound.taskMusic, ...(parsed.display?.sound?.taskMusic || {}) };
+      state.display.sound.voice = { ...base.display.sound.voice, ...(parsed.display?.sound?.voice || {}) };
+      state.display.speech = { ...base.display.speech, ...(parsed.display?.speech || {}) };
+      state.display.prophecy = { ...base.display.prophecy, ...(parsed.display?.prophecy || {}) };
       state.tournament = { ...base.tournament, ...(parsed.tournament || {}) };
+      state.prophecies = { ...base.prophecies, ...(parsed.prophecies || {}) };
       console.log('Состояние загружено');
     } catch {
       console.log('Создаю новое состояние');
@@ -315,6 +358,108 @@ export async function startServer({ dataDir, port, host } = {}) {
       res.end('Не найдено');
     }
   }
+
+  // --- голос ---
+  // Синтезатор берём системный: на Mac это say, на Windows PowerShell,
+  // на Linux espeak-ng. Готовый wav кладём в data/voice и переиспользуем:
+  // один и тот же текст не синтезируем дважды.
+  const VOICE_DIR = path.join(DATA_DIR, 'voice');
+  let voiceEngine = null; // { id, bin, voices: [] }
+
+  function canRun(bin, args) {
+    return new Promise((resolve) => {
+      const child = spawn(bin, args, { stdio: 'ignore' });
+      child.on('error', () => resolve(false));
+      child.on('close', (code) => resolve(code === 0 || code === 1));
+    });
+  }
+
+  async function detectVoice() {
+    await fsp.mkdir(VOICE_DIR, { recursive: true });
+
+    if (process.platform === 'darwin' && await canRun('say', ['-v', '?'])) {
+      const list = await new Promise((resolve) => {
+        let out = '';
+        const child = spawn('say', ['-v', '?']);
+        child.stdout.on('data', (c) => { out += c; });
+        child.on('error', () => resolve(''));
+        child.on('close', () => resolve(out));
+      });
+      // строки вида: Milena              ru_RU    # Здравствуйте, меня зовут Milena.
+      const voices = list.split('\n')
+        .map((line) => /^(\S[^#]*?)\s{2,}([a-z]{2}_[A-Z]{2})/.exec(line))
+        .filter(Boolean)
+        .map((m) => ({ id: m[1].trim(), name: m[1].trim(), lang: m[2] }));
+      const ru = voices.filter((v) => v.lang.startsWith('ru'));
+      // по умолчанию берём русский голос, иначе система прочтёт русский текст по-английски
+      voiceEngine = {
+        id: 'say',
+        voices: ru.length ? ru : voices,
+        ru: ru.length > 0,
+        def: ru.length ? ru[0].id : '',
+      };
+      return;
+    }
+
+    if (process.platform === 'win32') {
+      voiceEngine = { id: 'powershell', voices: [], ru: true };
+      return;
+    }
+
+    for (const bin of ['espeak-ng', 'espeak']) {
+      if (await canRun(bin, ['--version'])) {
+        voiceEngine = { id: 'espeak', bin, voices: [{ id: 'ru', name: 'Russian', lang: 'ru' }], ru: true };
+        return;
+      }
+    }
+    voiceEngine = null;
+  }
+
+  // Синтез в wav. Текст передаём файлом: так не страдают кавычки и длина.
+  async function synthesize(text, voice) {
+    if (!voiceEngine) throw new Error('В системе нет синтезатора речи');
+    const pick = voice || voiceEngine.def || '';
+    const key = crypto.createHash('sha1')
+      .update(`${voiceEngine.id}|${pick}|${text}`)
+      .digest('hex')
+      .slice(0, 16);
+    const file = path.join(VOICE_DIR, `${key}.wav`);
+    try {
+      await fsp.access(file);
+      return `/voice/${key}.wav`; // уже синтезировали раньше
+    } catch { /* синтезируем */ }
+
+    const txt = path.join(VOICE_DIR, `${key}.txt`);
+    await fsp.writeFile(txt, text, 'utf8');
+
+    const run = (bin, args) => new Promise((resolve, reject) => {
+      const child = spawn(bin, args, { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${bin} вернул ${code}`))));
+    });
+
+    if (voiceEngine.id === 'say') {
+      const args = ['-o', file, '--file-format=WAVE', '--data-format=LEI16@22050'];
+      if (pick) args.push('-v', pick);
+      args.push('-f', txt);
+      await run('say', args);
+    } else if (voiceEngine.id === 'espeak') {
+      await run(voiceEngine.bin, ['-v', pick || 'ru', '-s', '150', '-p', '35', '-w', file, '-f', txt]);
+    } else if (voiceEngine.id === 'powershell') {
+      const ps = `$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Speech;`
+        + `$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;`
+        + (pick ? `$s.SelectVoice('${pick.replace(/'/g, "''")}');` : '')
+        + `$s.SetOutputToWaveFile('${file.replace(/'/g, "''")}');`
+        + `$s.Speak([IO.File]::ReadAllText('${txt.replace(/'/g, "''")}',[Text.Encoding]::UTF8));$s.Dispose();`;
+      await run('powershell', ['-NoProfile', '-Command', ps]);
+    }
+
+    await fsp.unlink(txt).catch(() => {});
+    await fsp.access(file); // синтезатор мог промолчать
+    return `/voice/${key}.wav`;
+  }
+
+  await detectVoice();
 
   // Ищем звуковые файлы в папке и во вложенных папках (не глубже двух уровней)
   const AUDIO_RE = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i;
@@ -465,6 +610,40 @@ export async function startServer({ dataDir, port, host } = {}) {
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });
       }
+    }
+
+    // Заготовленные предсказания: пульт умеет вернуть список к ним
+    if (pathname === '/api/prophecies/default' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, list: DEFAULT_PROPHECIES });
+    }
+
+    // Какой синтезатор есть и какие у него голоса
+    if (pathname === '/api/voice' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        ok: true,
+        engine: voiceEngine ? voiceEngine.id : null,
+        ru: !!(voiceEngine && voiceEngine.ru),
+        voices: voiceEngine ? voiceEngine.voices : [],
+      });
+    }
+
+    // Озвучить текст: вернём адрес готового wav
+    if (pathname === '/api/voice' && req.method === 'POST') {
+      try {
+        const { text, voice } = JSON.parse(await readBody(req) || '{}');
+        const clean = String(text || '').trim().slice(0, 2000);
+        if (!clean) throw new Error('Нечего озвучивать');
+        const url = await synthesize(clean, voice);
+        return sendJson(res, 200, { ok: true, url });
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+      }
+    }
+
+    if (pathname.startsWith('/voice/')) {
+      const target = safeJoin(VOICE_DIR, pathname.slice('/voice'.length));
+      if (!target) return sendJson(res, 400, { ok: false });
+      return serveFile(res, target, req.headers.range);
     }
 
     // Список музыки для заданий: что лежит в public/music/tasks.

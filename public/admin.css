@@ -197,3 +197,12 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .round-done { background: rgba(141,240,230,.07); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.8rem; margin-top: 0.8rem; }
 .history-round { color: var(--dim); font-size: 0.88rem; padding: 0.35rem 0; border-top: 1px solid var(--line); }
 .history-round b { color: var(--text); font-weight: 500; }
+
+/* список предсказаний и кнопки озвучки */
+.area {
+  width: 100%; max-width: 52rem; resize: vertical;
+  background: #0b1f23; color: var(--text); font: inherit; font-size: 0.95rem; line-height: 1.5;
+  border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.6rem 0.7rem;
+}
+.area:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.voice-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.4rem; }

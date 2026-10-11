@@ -333,12 +333,78 @@ ok('четверо прошедших собираются в финал',
   final ? `${final.name}, групп ${final.groups.length}` : 'тура нет');
 ok('финал открыт как текущий тур', st.tournament.currentRoundId === final.id);
 
-// 8. за весь прогон страница не выбросила ошибок
+// 8. предсказания: случайное вытягивание, озвучка, учёт использованных
+await evaluate(`document.querySelector('[data-tab="prophecy"]').click()`);
+await sleep(300);
+const listed = await evaluate(`document.querySelector('#prophecy-list').value.split('\\n').filter(Boolean).length`);
+ok('список предсказаний заполнен заготовками', listed >= 20, `${listed} шт.`);
+
+await evaluate(`document.querySelector('#prophecy-who').value = 'Ирина';
+  document.querySelector('#prophecy-draw').click(); 'ok'`);
+await sleep(1500);
+st = await (await fetch(`${APP}/api/state`)).json();
+const drawn = st.display.prophecy || {};
+ok('предсказание вытянулось и попало на экран',
+  st.display.mode === 'prophecy' && !!drawn.text && drawn.who === 'Ирина',
+  drawn.text ? `«${drawn.text.slice(0, 40)}…»` : 'пусто');
+ok('вытянутое записано как использованное', st.prophecies.used.includes(drawn.text));
+ok('предсказание ушло в озвучку', (st.display.speech?.runId || 0) > 0 && st.display.speech.text === drawn.text);
+
+// второй раз выпадет другое: уже показанные не повторяются
+await evaluate(`document.querySelector('#prophecy-draw').click()`);
+await sleep(1500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('второе предсказание другое', st.display.prophecy.text !== drawn.text && st.prophecies.used.length === 2,
+  `использовано ${st.prophecies.used.length}`);
+
+await evaluate(`document.querySelector('#prophecy-reset').click()`);
+await sleep(400);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('сброс использованных работает', st.prophecies.used.length === 0);
+
+// свой список предсказаний сохраняется
+await evaluate(`const a = document.querySelector('#prophecy-list');
+  a.value = 'Первое своё\\nВторое своё';
+  document.querySelector('#prophecy-save').click(); 'ok'`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('свой список предсказаний сохраняется',
+  st.prophecies.list.length === 2 && st.prophecies.list[0] === 'Первое своё');
+
+// 9. голос: кнопка в эфире читает название и описание задания
+await evaluate(`document.querySelector('[data-tab="show"]').click()`);
+await sleep(300);
+st = await (await fetch(`${APP}/api/state`)).json();
+const taskContest = st.contests[0];
+taskContest.description = 'Найдите спрятанный предмет в тёмной комнате.';
+st.display.mode = 'task';
+st.display.contestId = taskContest.id;
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await sleep(600);
+const hint = await evaluate(`document.querySelector('#voice-now').textContent`);
+ok('пульт показывает, что прочитает голос', /Найдите спрятанный предмет/.test(String(hint)), String(hint));
+
+await evaluate(`document.querySelector('#speak-task').click()`);
+await sleep(1800);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('кнопка «Озвучить задание» отправляет текст на экран',
+  /Найдите спрятанный предмет/.test(st.display.speech?.text || ''), st.display.speech?.text || 'пусто');
+const engine = await (await fetch(`${APP}/api/voice`)).json();
+ok('к тексту приложен готовый звук', engine.engine ? /^\/voice\/.+\.wav$/.test(st.display.speech.url || '') : true,
+  engine.engine ? String(st.display.speech.url) : 'синтезатора нет — читает браузер');
+
+await evaluate(`document.querySelector('#speak-stop').click()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('«Замолчать» снимает текст', st.display.speech.text === '' && st.display.speech.url === '');
+
+// 10. за весь прогон страница не выбросила ошибок
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));
 ws.close();
 chrome.kill();
 server.kill();
-fs.rmSync(dataDir, { recursive: true, force: true });
+// сервер мог записать файл уже после kill — не роняем тест из-за уборки
+try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
 process.exit(checks.some((c) => c.startsWith('FAIL')) ? 1 : 0);

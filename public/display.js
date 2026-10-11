@@ -9,6 +9,7 @@ let prevRects = new Map(); // FLIP: позиции строк до перери�
 let firstRender = true; // на первой отрисовке звуки не играем
 let prevMode = null;
 let prevTestId = 0;
+let prevSpeechId = null; // что уже прочитано голосом
 let newlyRevealed = 0;
 const unmute = document.getElementById('unmute');
 const PREVIEW = new URLSearchParams(location.search).has('preview'); // окно предпросмотра на пульте — без звука
@@ -239,6 +240,23 @@ function taskView(contest) {
   return box;
 }
 
+// Предсказание гостю: его же и зачитывает голос зеркала.
+function prophecyView(pr) {
+  const box = el('div', 'task-card prophecy');
+  box.appendChild(el('div', 'task-label', 'Предсказание'));
+  if (pr.who) box.appendChild(el('div', 'task-name', pr.who));
+  const text = el('div', 'task-text prophecy-text');
+  if (pr.text) {
+    for (const line of String(pr.text).split(/\n+/)) {
+      if (line.trim()) text.appendChild(el('p', null, line.trim()));
+    }
+  } else {
+    text.appendChild(el('p', null, 'Зеркало ещё молчит…'));
+  }
+  box.appendChild(text);
+  return box;
+}
+
 // Сетка тура: группы рядом, в каждой свои участники и баллы за тур.
 // Баллы закрыты, пока ведущий их не откроет, — как и в обычном рейтинге.
 function groupsView(round) {
@@ -378,6 +396,8 @@ function render() {
     banner.hidden = true;
   }
 
+  if (!PREVIEW) applySpeech(d);
+
   captureRects();
   stage.innerHTML = '';
 
@@ -391,6 +411,8 @@ function render() {
     stage.appendChild(rowsView(null));
   } else if (d.mode === 'task') {
     stage.appendChild(taskView(state.contests.find((c) => c.id === d.contestId)));
+  } else if (d.mode === 'prophecy') {
+    stage.appendChild(prophecyView(d.prophecy || {}));
   } else if (d.mode === 'groups') {
     const round = MM.currentRound(state);
     stage.appendChild(el('h2', 'stage-title', round ? round.name : 'Турнир'));
@@ -460,6 +482,19 @@ const trackUrl = (file) => `music/tasks/${file.split('/').map(encodeURIComponent
 //   задание и итоги — трек этого конкурса (или «без музыки», если так выбрали);
 //   остальные       — трек текущего конкурса, иначе первый файл из папки,
 //                     а если музыки заданий нет совсем — заставка.
+// Голос зеркала: пульт меняет runId — значит просит прочитать заново.
+function applySpeech(d) {
+  const sp = d.speech || {};
+  const id = sp.runId || 0;
+  if (prevSpeechId === null) { prevSpeechId = id; return; } // не читаем то, что было до открытия окна
+  if (id === prevSpeechId) return;
+  prevSpeechId = id;
+  const voice = (d.sound && d.sound.voice) || {};
+  if (voice.on === false) return;
+  if (!sp.text && !sp.url) { MMSound.stopSpeech(); return; }
+  MMSound.speak({ url: sp.url, text: sp.text, volume: voice.volume ?? 1 });
+}
+
 function musicPlan(d) {
   const waiting = (d.sound && d.sound.music) || {};
   const task = (d.sound && d.sound.taskMusic) || {};
@@ -467,7 +502,7 @@ function musicPlan(d) {
     ? null
     : { src: 'music/standby.mp3', volume: waiting.volume ?? 0.6 };
 
-  if (d.mode === 'standby') return standby || {};
+  if (d.mode === 'standby' || d.mode === 'prophecy') return standby || {};
   if (task.on === false) return standby ? { ...standby, wantsTrack: true } : {};
 
   const chosen = trackForContest(d.contestId);

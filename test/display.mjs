@@ -267,11 +267,78 @@ const onBoard = await waitFor(`(() => {
 ok('на рейтинге звучит музыка заданий', onBoard === true);
 dropTmp();
 
+// --- голос зеркала и предсказания ---
+const prophecyText = 'Проверка голоса: зеркало видит тебя.';
+await post((st) => {
+  st.display.mode = 'prophecy';
+  st.display.prophecy = { text: prophecyText, who: 'Ирина' };
+  st.display.sound.voice = { on: true, volume: 1, name: '' };
+});
+const prShown = await waitFor(`(document.querySelector('.prophecy-text p') || {}).textContent || ''`, prophecyText);
+ok('предсказание видно на экране', prShown === prophecyText, String(prShown));
+ok('имя гостя подписано', (await evaluate(`(document.querySelector('.prophecy .task-name') || {}).textContent || ''`)) === 'Ирина');
+
+const voiceInfo = await (await fetch(`${APP}/api/voice`)).json();
+if (!voiceInfo.engine) {
+  ok('голос: системный синтезатор не найден, проверку пропускаем', true, 'на эту машину не установлен say/espeak');
+} else {
+  const made = await (await fetch(`${APP}/api/voice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: prophecyText }),
+  })).json();
+  ok('сервер синтезировал речь', made.ok && /^\/voice\/.+\.wav$/.test(made.url || ''), String(made.url || made.error));
+
+  const head = await fetch(`${APP}${made.url}`);
+  ok('файл речи отдаётся', head.ok && Number(head.headers.get('content-length')) > 1000,
+    `${head.headers.get('content-length')} байт`);
+
+  // повторный запрос берёт готовый файл из кэша — адрес тот же
+  const again = await (await fetch(`${APP}/api/voice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: prophecyText }),
+  })).json();
+  ok('один и тот же текст не синтезируется дважды', again.url === made.url);
+
+  await post((st) => { st.display.speech = { runId: 1, text: prophecyText, url: made.url }; });
+  const speaking = await waitFor('MMSound.speaking()', true, 12000);
+  ok('зеркало читает предсказание голосом', speaking === true);
+
+  // пока говорит голос — музыка приглушена
+  const ducked = await evaluate(`(() => {
+    const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+    return a ? Math.round(a.volume * 100) : -1;
+  })()`);
+  ok('музыка приглушается под голос', ducked === -1 || ducked <= 20, `громкость ${ducked}%`);
+
+  await post((st) => { st.display.speech = { runId: 2, text: '', url: '' }; });
+  const quiet = await waitFor('MMSound.speaking()', false, 6000);
+  ok('кнопка «Замолчать» обрывает голос', quiet === false);
+
+  const back = await waitFor(`(() => {
+    const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
+    return a ? a.volume > 0.4 : true;
+  })()`, true, 8000);
+  ok('после голоса музыка возвращается', back === true);
+
+  // голос выключен — зеркало молчит
+  await post((st) => {
+    st.display.sound.voice = { on: false, volume: 1, name: '' };
+    st.display.speech = { runId: 3, text: prophecyText, url: made.url };
+  });
+  await sleep(1200);
+  ok('выключенный голос молчит', (await evaluate('MMSound.speaking()')) === false);
+}
+
+const defaults = await (await fetch(`${APP}/api/prophecies/default`)).json();
+ok('заготовки предсказаний на месте', defaults.ok && defaults.list.length >= 20, `${defaults.list.length} шт.`);
+
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));
 ws.close();
 chrome.kill();
 server.kill();
-fs.rmSync(dataDir, { recursive: true, force: true });
+try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
 process.exit(checks.some((c) => c.startsWith('FAIL')) ? 1 : 0);

@@ -651,3 +651,24 @@ body[data-count='many'] .rows { gap: 0.38em; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* предсказание: текст крупнее задания и проявляется медленно */
+.prophecy .task-name {
+  font-size: 2.4em;
+  color: var(--gold);
+  text-shadow: 0 0 2.2rem rgba(239, 208, 138, 0.45);
+}
+.prophecy-text {
+  max-width: 40em;
+  animation: prophecy-in 2.4s ease both;
+}
+.prophecy-text p {
+  font-size: 1.9em;
+  line-height: 1.5;
+  color: rgba(226, 255, 252, 0.95);
+  text-shadow: 0 0 2.4rem rgba(141, 240, 230, 0.35);
+}
+@keyframes prophecy-in {
+  from { opacity: 0; filter: blur(0.3em); transform: translateY(0.4em); }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}

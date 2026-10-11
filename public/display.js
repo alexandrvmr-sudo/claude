@@ -492,7 +492,7 @@ function applySpeech(d) {
   const voice = (d.sound && d.sound.voice) || {};
   if (voice.on === false) return;
   if (!sp.text && !sp.url) { MMSound.stopSpeech(); return; }
-  MMSound.speak({ url: sp.url, text: sp.text, volume: voice.volume ?? 1 });
+  MMSound.speak({ url: sp.url, text: sp.text, volume: voice.volume ?? 1, style: voice.style || 'anon' });
 }
 
 function musicPlan(d) {

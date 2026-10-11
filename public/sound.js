@@ -246,59 +246,114 @@ window.MMSound = (() => {
 
   function stopVoice() {
     if (!voiceNodes) return;
-    try { voiceNodes.src.stop(); } catch { /* уже закончил */ }
-    try { voiceNodes.lfo.stop(); } catch { /* уже закончил */ }
+    const nodes = [voiceNodes.src, ...(voiceNodes.extra || [])];
     voiceNodes = null;
+    for (const n of nodes) { try { n.stop(); } catch { /* уже закончил */ } }
     duck(false);
   }
 
-  function playVoiceBuffer(buffer, volume, onEnd) {
+  // Характеры голоса: от почти человеческого шёпота до низкого демона.
+  // rate — насколько замедляем запись (вместе с темпом падает и тон),
+  // drive — перегруз, ring/ringHz — дрожание, wet — хвост эха.
+  const VOICE_STYLES = {
+    soft: { rate: 0.92, drive: 3, ring: 0.14, ringHz: 46, double: 0.3, wet: 0.16, hp: 85, lp: 7000, verb: 0.6 },
+    anon: { rate: 0.86, drive: 7, ring: 0.26, ringHz: 54, double: 0.45, wet: 0.24, hp: 95, lp: 5600, verb: 0.75 },
+    demon: { rate: 0.76, drive: 16, ring: 0.44, ringHz: 34, double: 0.55, wet: 0.34, hp: 105, lp: 4400, verb: 1.1 },
+  };
+
+  function voiceStyle(name) {
+    return VOICE_STYLES[name] || VOICE_STYLES.anon;
+  }
+
+  function playVoiceBuffer(buffer, volume, style, onEnd) {
+    const S = voiceStyle(style);
+
+    // Основной голос и его чуть расстроенный двойник: вдвоём звучит объёмнее,
+    // чем одна запись, и слышно «не человека».
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.playbackRate.value = 0.82; // ниже и чуть медленнее
+    src.playbackRate.value = S.rate;
+
+    const dbl = ctx.createBufferSource();
+    dbl.buffer = buffer;
+    dbl.playbackRate.value = S.rate * 0.994;
+    const dblDelay = ctx.createDelay();
+    dblDelay.delayTime.value = 0.019; // 19 мс — утолщает голос, а не раздваивает
+    const dblGain = ctx.createGain();
+    dblGain.gain.value = S.double;
+
+    const mix = ctx.createGain();
+    mix.gain.value = 0.8;
 
     const shaper = ctx.createWaveShaper();
-    shaper.curve = distortionCurve(14);
-    shaper.oversample = '2x';
+    shaper.curve = distortionCurve(S.drive);
+    shaper.oversample = '4x'; // меньше лишней грязи на согласных
 
-    // кольцевая модуляция — то самое «роботизированное» дрожание
+    // Амплитудная модуляция: дрожание есть, но слова остаются разборчивыми.
     const ring = ctx.createGain();
-    ring.gain.value = 0.62;
+    ring.gain.value = 1 - S.ring;
     const lfo = ctx.createOscillator();
     lfo.type = 'sine';
-    lfo.frequency.value = 33;
+    lfo.frequency.value = S.ringHz;
     const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = 0.38;
+    lfoDepth.gain.value = S.ring;
     lfo.connect(lfoDepth).connect(ring.gain);
 
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
-    hp.frequency.value = 110;
+    hp.frequency.value = S.hp;
+
+    // Подъём в районе 2 кГц — именно он отвечает за «слышно каждое слово».
+    const presence = ctx.createBiquadFilter();
+    presence.type = 'peaking';
+    presence.frequency.value = 2100;
+    presence.Q.value = 0.9;
+    presence.gain.value = 5;
+
+    // Гул ниже 200 Гц чуть убираем, иначе низкий голос превращается в кашу.
+    const mud = ctx.createBiquadFilter();
+    mud.type = 'peaking';
+    mud.frequency.value = 260;
+    mud.Q.value = 0.8;
+    mud.gain.value = -3;
+
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 3600;
+    lp.frequency.value = S.lp;
+
+    // Компрессор выравнивает громкость: тихие слова не пропадают под музыку.
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -24;
+    comp.knee.value = 12;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.18;
 
     const dry = ctx.createGain();
-    dry.gain.value = 0.85;
+    dry.gain.value = 1 - S.wet * 0.5;
     const wet = ctx.createGain();
-    wet.gain.value = 0.3;
+    wet.gain.value = S.wet;
     const verb = ctx.createConvolver();
-    verb.buffer = impulse(1.1, 3.2);
+    verb.buffer = impulse(S.verb, 3.6);
 
     const out = ctx.createGain();
-    out.gain.value = Math.max(0, Math.min(1.5, volume));
+    out.gain.value = Math.max(0, Math.min(1.5, volume)) * 1.15;
 
-    src.connect(shaper).connect(ring).connect(hp).connect(lp);
-    lp.connect(dry).connect(out);
-    lp.connect(verb).connect(wet).connect(out);
+    src.connect(mix);
+    dbl.connect(dblDelay).connect(dblGain).connect(mix);
+    mix.connect(shaper).connect(ring).connect(hp).connect(mud).connect(presence).connect(lp).connect(comp);
+    comp.connect(dry).connect(out);
+    comp.connect(verb).connect(wet).connect(out);
     out.connect(master);
 
-    lfo.start();
-    src.start();
-    voiceNodes = { src, lfo };
+    const t = ctx.currentTime + 0.02;
+    lfo.start(t);
+    src.start(t);
+    dbl.start(t);
+    voiceNodes = { src, extra: [dbl, lfo] };
     src.onended = () => {
       if (voiceNodes && voiceNodes.src === src) voiceNodes = null;
-      try { lfo.stop(); } catch { /* уже остановлен */ }
+      for (const n of [dbl, lfo]) { try { n.stop(); } catch { /* уже остановлен */ } }
       duck(false);
       if (onEnd) onEnd();
     };
@@ -386,7 +441,7 @@ window.MMSound = (() => {
 
     // Произнести текст. url — готовый wav от сервера (его искажаем),
     // text — запасной вариант через голос браузера, если синтезатора нет.
-    async speak({ url, text, volume = 1 }) {
+    async speak({ url, text, volume = 1, style = 'anon' }) {
       if (!settings.on) return false;
       stopVoice();
       if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -396,7 +451,7 @@ window.MMSound = (() => {
           const data = await (await fetch(url)).arrayBuffer();
           const buffer = await ctx.decodeAudioData(data);
           duck(true);
-          playVoiceBuffer(buffer, volume);
+          playVoiceBuffer(buffer, volume, style);
           return true;
         } catch { /* не вышло — читаем браузерным голосом */ }
       }
@@ -404,8 +459,9 @@ window.MMSound = (() => {
       if (text && window.speechSynthesis) {
         const u = new SpeechSynthesisUtterance(text);
         u.lang = 'ru-RU';
-        u.pitch = 0.4; // ниже, чтобы звучало мрачнее
-        u.rate = 0.92;
+        const S = voiceStyle(style);
+        u.pitch = Math.max(0, (S.rate - 0.5) * 1.2); // чем ниже темп, тем ниже голос
+        u.rate = S.rate + 0.05;
         u.volume = Math.max(0, Math.min(1, volume));
         const ru = speechSynthesis.getVoices().find((v) => /ru/i.test(v.lang));
         if (ru) u.voice = ru;

@@ -363,9 +363,11 @@ st = await (await fetch(`${APP}/api/state`)).json();
 ok('сброс использованных работает', st.prophecies.used.length === 0);
 
 // свой список предсказаний сохраняется
-await evaluate(`const a = document.querySelector('#prophecy-list');
-  a.value = 'Первое своё\\nВторое своё';
-  document.querySelector('#prophecy-save').click(); 'ok'`);
+await evaluate(`(() => {
+  const area = document.querySelector('#prophecy-list');
+  area.value = 'Первое своё\\nВторое своё';
+  document.querySelector('#prophecy-save').click(); return 'ok';
+})()`);
 await sleep(500);
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('свой список предсказаний сохраняется',
@@ -392,6 +394,25 @@ ok('кнопка «Озвучить задание» отправляет тек
 const engine = await (await fetch(`${APP}/api/voice`)).json();
 ok('к тексту приложен готовый звук', engine.engine ? /^\/voice\/.+\.wav$/.test(st.display.speech.url || '') : true,
   engine.engine ? String(st.display.speech.url) : 'синтезатора нет — читает браузер');
+
+// характер голоса доезжает до экрана
+await evaluate(`(() => {
+  document.querySelector('[data-tab="settings"]').click();
+  const sel = document.querySelector('#voice-style');
+  sel.value = 'demon';
+  sel.dispatchEvent(new Event('change')); return 'ok';
+})()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('характер голоса сохраняется', st.display.sound.voice.style === 'demon', String(st.display.sound.voice.style));
+await evaluate(`(() => {
+  const sel = document.querySelector('#voice-style');
+  sel.value = 'anon';
+  sel.dispatchEvent(new Event('change')); return 'ok';
+})()`);
+await sleep(500);
+await evaluate(`document.querySelector('[data-tab="show"]').click()`);
+await sleep(300);
 
 await evaluate(`document.querySelector('#speak-stop').click()`);
 await sleep(500);

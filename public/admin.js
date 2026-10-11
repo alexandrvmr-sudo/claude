@@ -1082,7 +1082,8 @@ function soundCfg() {
   state.display.sound = state.display.sound || { on: true, volume: 0.7, testId: 0 };
   state.display.sound.music = state.display.sound.music || { on: true, volume: 0.6 };
   state.display.sound.taskMusic = state.display.sound.taskMusic || { on: true, volume: 0.5, scan: 0 };
-  state.display.sound.voice = state.display.sound.voice || { on: true, volume: 1, name: '' };
+  state.display.sound.voice = state.display.sound.voice || { on: true, volume: 1, name: '', style: 'anon' };
+  if (!state.display.sound.voice.style) state.display.sound.voice.style = 'anon';
   return state.display.sound;
 }
 
@@ -1107,7 +1108,14 @@ function voiceEngineText() {
     return `Синтезатор найден (${voiceInfo.engine}), но русского голоса в системе нет:`
       + ' установите его в настройках системы, иначе русский текст прочтётся с акцентом.';
   }
-  return `Синтезатор: ${voiceInfo.engine}. Русский голос есть — всё готово.`;
+  if (!voiceInfo.male) {
+    return `Синтезатор: ${voiceInfo.engine}. Русский голос есть, но он женский —`
+      + ' для мужского поставьте в системе голос Юрий (Mac: Системные настройки → Универсальный'
+      + ' доступ → Устный контент → Управление голосами → русский) и выберите его ниже.'
+      + ' Улучшенные (Enhanced) варианты звучат заметно чище обычных.';
+  }
+  return `Синтезатор: ${voiceInfo.engine}, голос по умолчанию мужской — всё готово.`
+    + ' Если в списке есть вариант Enhanced или Premium, выберите его: он звучит чище.';
 }
 
 // Просим зеркало прочитать текст: сначала готовим wav, потом двигаем runId.
@@ -1120,7 +1128,11 @@ async function speak(text) {
     const r = await fetch('/api/voice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: clean, voice: soundCfg().voice.name || '' }),
+      body: JSON.stringify({
+        text: clean,
+        voice: soundCfg().voice.name || '',
+        style: soundCfg().voice.style || 'anon',
+      }),
     });
     const data = await r.json();
     if (data.ok) url = data.url;
@@ -1145,6 +1157,7 @@ function renderVoice() {
   $('#voice-volume').value = String(Math.round((v.volume ?? 1) * 100));
   $('#voice-volume-value').textContent = `${Math.round((v.volume ?? 1) * 100)}%`;
   $('#voice-engine').textContent = voiceEngineText();
+  $('#voice-style').value = v.style || 'anon';
 
   const sel = $('#voice-name');
   sel.innerHTML = '';
@@ -1169,6 +1182,7 @@ function renderVoice() {
 
 $('#voice-on').addEventListener('change', (e) => { soundCfg().voice.on = e.target.checked; push(); });
 $('#voice-name').addEventListener('change', (e) => { soundCfg().voice.name = e.target.value; push(); });
+$('#voice-style').addEventListener('change', (e) => { soundCfg().voice.style = e.target.value; push(); });
 $('#voice-volume').addEventListener('input', (e) => {
   soundCfg().voice.volume = Number(e.target.value) / 100;
   $('#voice-volume-value').textContent = `${e.target.value}%`;

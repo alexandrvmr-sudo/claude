@@ -301,6 +301,26 @@ if (!voiceInfo.engine) {
   })).json();
   ok('один и тот же текст не синтезируется дважды', again.url === made.url);
 
+  // Характеры голоса: экран замедляет запись, поэтому синтезатор читает быстрее.
+  // Итоговая длительность фразы должна оставаться примерно одинаковой.
+  const RATES = { soft: 0.92, anon: 0.86, demon: 0.76 };
+  const spokenSeconds = async (style) => {
+    const r = await (await fetch(`${APP}/api/voice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Зеркало видит тебя насквозь.', style }),
+    })).json();
+    const buf = new DataView(await (await fetch(`${APP}${r.url}`)).arrayBuffer());
+    const byteRate = buf.getUint32(28, true);
+    return { url: r.url, played: ((buf.byteLength - 44) / byteRate) / RATES[style] };
+  };
+  const soft = await spokenSeconds('soft');
+  const demon = await spokenSeconds('demon');
+  ok('у характеров голоса свои записи', soft.url !== demon.url);
+  ok('низкий голос не растягивает фразу',
+    Math.abs(soft.played - demon.played) / soft.played < 0.15,
+    `${soft.played.toFixed(2)} с и ${demon.played.toFixed(2)} с`);
+
   await post((st) => { st.display.speech = { runId: 1, text: prophecyText, url: made.url }; });
   const speaking = await waitFor('MMSound.speaking()', true, 12000);
   ok('зеркало читает предсказание голосом', speaking === true);

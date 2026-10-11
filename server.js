@@ -112,7 +112,7 @@ function defaultDisplay() {
       // музыка заданий: файлы из public/music/tasks, раздаются конкурсам по очереди
       taskMusic: { on: true, volume: 0.5, scan: 0 },
       // голос зеркала: читает задания и предсказания
-      voice: { on: true, volume: 1, name: '' },
+      voice: { on: true, volume: 1, name: '', style: 'anon' },
     },
     // что зачитать голосом: пульт присылает текст и увеличивает runId
     speech: { runId: 0, text: '', url: '' },
@@ -391,12 +391,19 @@ export async function startServer({ dataDir, port, host } = {}) {
         .filter(Boolean)
         .map((m) => ({ id: m[1].trim(), name: m[1].trim(), lang: m[2] }));
       const ru = voices.filter((v) => v.lang.startsWith('ru'));
+      // Голос зеркала мужской, поэтому из русских выбираем мужской и,
+      // если система его скачала, улучшенный вариант (Enhanced/Premium).
+      const score = (v) => (/(yuri|юрий|mikhail|михаил|aleksandr|александр)/i.test(v.name) ? 8 : 0)
+        + (/premium/i.test(v.name) ? 3 : 0)
+        + (/enhanced/i.test(v.name) ? 2 : 0);
+      const ranked = [...ru].sort((a, b) => score(b) - score(a));
       // по умолчанию берём русский голос, иначе система прочтёт русский текст по-английски
       voiceEngine = {
         id: 'say',
-        voices: ru.length ? ru : voices,
-        ru: ru.length > 0,
-        def: ru.length ? ru[0].id : '',
+        voices: ranked.length ? ranked : voices,
+        ru: ranked.length > 0,
+        def: ranked.length ? ranked[0].id : '',
+        male: ranked.length ? score(ranked[0]) >= 8 : false,
       };
       return;
     }
@@ -415,12 +422,18 @@ export async function startServer({ dataDir, port, host } = {}) {
     voiceEngine = null;
   }
 
+  // Экран замедляет запись, чтобы понизить тон, — значит синтезатор должен
+  // прочитать текст быстрее, иначе голос выйдет сонным. Числа те же, что
+  // в public/sound.js у характеров голоса.
+  const STYLE_RATE = { soft: 0.92, anon: 0.86, demon: 0.76 };
+
   // Синтез в wav. Текст передаём файлом: так не страдают кавычки и длина.
-  async function synthesize(text, voice) {
+  async function synthesize(text, voice, style) {
     if (!voiceEngine) throw new Error('В системе нет синтезатора речи');
     const pick = voice || voiceEngine.def || '';
+    const rate = STYLE_RATE[style] || STYLE_RATE.anon;
     const key = crypto.createHash('sha1')
-      .update(`${voiceEngine.id}|${pick}|${text}`)
+      .update(`${voiceEngine.id}|${pick}|${rate}|${text}`)
       .digest('hex')
       .slice(0, 16);
     const file = path.join(VOICE_DIR, `${key}.wav`);
@@ -439,12 +452,21 @@ export async function startServer({ dataDir, port, host } = {}) {
     });
 
     if (voiceEngine.id === 'say') {
-      const args = ['-o', file, '--file-format=WAVE', '--data-format=LEI16@22050'];
+      // 44 кГц вместо 22: после замедления и фильтров разница слышна
+      const args = ['-o', file, '--file-format=WAVE', '--data-format=LEI16@44100',
+        '-r', String(Math.round(168 / rate))];
       if (pick) args.push('-v', pick);
       args.push('-f', txt);
-      await run('say', args);
+      try {
+        await run('say', args);
+      } catch {
+        // система не приняла имя голоса — читаем голосом по умолчанию
+        await run('say', ['-o', file, '--file-format=WAVE', '--data-format=LEI16@44100',
+          '-r', String(Math.round(168 / rate)), '-f', txt]);
+      }
     } else if (voiceEngine.id === 'espeak') {
-      await run(voiceEngine.bin, ['-v', pick || 'ru', '-s', '150', '-p', '35', '-w', file, '-f', txt]);
+      await run(voiceEngine.bin, ['-v', pick || 'ru', '-s', String(Math.round(158 / rate)),
+        '-p', '30', '-a', '180', '-w', file, '-f', txt]);
     } else if (voiceEngine.id === 'powershell') {
       const ps = `$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Speech;`
         + `$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;`
@@ -623,6 +645,7 @@ export async function startServer({ dataDir, port, host } = {}) {
         ok: true,
         engine: voiceEngine ? voiceEngine.id : null,
         ru: !!(voiceEngine && voiceEngine.ru),
+        male: !!(voiceEngine && voiceEngine.male),
         voices: voiceEngine ? voiceEngine.voices : [],
       });
     }
@@ -630,10 +653,10 @@ export async function startServer({ dataDir, port, host } = {}) {
     // Озвучить текст: вернём адрес готового wav
     if (pathname === '/api/voice' && req.method === 'POST') {
       try {
-        const { text, voice } = JSON.parse(await readBody(req) || '{}');
+        const { text, voice, style } = JSON.parse(await readBody(req) || '{}');
         const clean = String(text || '').trim().slice(0, 2000);
         if (!clean) throw new Error('Нечего озвучивать');
-        const url = await synthesize(clean, voice);
+        const url = await synthesize(clean, voice, style);
         return sendJson(res, 200, { ok: true, url });
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });

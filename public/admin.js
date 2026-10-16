@@ -66,6 +66,7 @@ const MODES = [
   { id: 'spotlight', label: 'Один участник' },
   { id: 'winner', label: 'Победитель' },
   { id: 'draw', label: 'Жеребьёвка' },
+  { id: 'quiz', label: 'Блиц' },
   { id: 'prophecy', label: 'Предсказание' },
 ];
 
@@ -523,6 +524,27 @@ function renderContests() {
     });
     card.appendChild(about);
 
+    // у блица свой список вопросов: строка «вопрос | ответ»
+    if (MM.kindOf(c) === 'blitz') {
+      const quiz = el('textarea');
+      quiz.rows = 6;
+      quiz.placeholder = 'Вопросы блица, по одному в строке: вопрос | ответ';
+      quiz.value = (c.questions || []).map((q) => `${q.q} | ${q.a}`).join('\n');
+      quiz.addEventListener('change', () => {
+        c.questions = quiz.value.split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [q, ...rest] = line.split('|');
+            return { q: q.trim(), a: rest.join('|').trim() };
+          })
+          .filter((q) => q.q);
+        push();
+      });
+      card.appendChild(quiz);
+      card.appendChild(el('p', 'hint', `Вопросов: ${(c.questions || []).length}. Разделитель — вертикальная черта.`));
+    }
+
     host.appendChild(card);
   });
 }
@@ -655,6 +677,68 @@ function scoreCard(p, contest, kindId) {
   return card;
 }
 
+// --- блиц ---
+// Вопросы хранятся у конкурса, пульт листает их и выводит на зеркало.
+function quizState() {
+  state.display.quiz = state.display.quiz || { contestId: null, index: 0, revealed: false };
+  return state.display.quiz;
+}
+
+function quizList(contest) {
+  return (contest && contest.questions) || [];
+}
+
+function quizStep(delta) {
+  const contest = scoreContest();
+  const list = quizList(contest);
+  if (!list.length) return;
+  const q = quizState();
+  if (q.contestId !== contest.id) q.index = 0;
+  q.contestId = contest.id;
+  q.index = Math.max(0, Math.min(list.length - 1, (q.index || 0) + delta));
+  q.revealed = false;
+  state.display.mode = 'quiz';
+  push();
+}
+
+function renderQuiz(contest) {
+  const box = $('#quiz-box');
+  const isQuiz = contest && MM.kindOf(contest) === 'blitz';
+  box.hidden = !isQuiz;
+  if (!isQuiz) return;
+
+  const list = quizList(contest);
+  const q = quizState();
+  const index = q.contestId === contest.id ? Math.max(0, Math.min(list.length - 1, q.index || 0)) : 0;
+  const item = list[index];
+  $('#quiz-count').textContent = list.length
+    ? `Вопрос ${index + 1} из ${list.length}`
+    : 'Вопросов нет: впишите их на вкладке «Конкурсы».';
+  $('#quiz-q').textContent = item ? item.q : '—';
+  const answer = $('#quiz-a');
+  answer.textContent = item ? (q.revealed && q.contestId === contest.id ? item.a : 'Ответ скрыт') : '';
+  answer.classList.toggle('is-open', !!(item && q.revealed && q.contestId === contest.id));
+}
+
+$('#quiz-next').addEventListener('click', () => quizStep(1));
+$('#quiz-prev').addEventListener('click', () => quizStep(-1));
+$('#quiz-answer').addEventListener('click', () => {
+  const contest = scoreContest();
+  const q = quizState();
+  q.contestId = contest ? contest.id : null;
+  q.revealed = !q.revealed;
+  push();
+});
+$('#quiz-screen').addEventListener('click', () => {
+  const contest = scoreContest();
+  if (!contest) return;
+  const q = quizState();
+  if (q.contestId !== contest.id) { q.contestId = contest.id; q.index = 0; }
+  q.revealed = false;
+  state.display.mode = 'quiz';
+  push();
+});
+
 function renderScoreCards() {
   const sel = $('#score-contest');
   const prev = sel.value;
@@ -671,10 +755,12 @@ function renderScoreCards() {
   const contest = scoreContest();
   if (!contest) {
     $('#score-kind').textContent = 'Сначала добавьте конкурс.';
+    renderQuiz(null);
     return;
   }
   const kindId = MM.kindOf(contest);
   $('#score-kind').textContent = kindHint(kindId);
+  renderQuiz(contest);
 
   if (!state.participants.length) {
     host.appendChild(el('p', 'hint', 'Сначала добавьте участников.'));

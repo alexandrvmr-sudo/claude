@@ -387,6 +387,52 @@ await clickOn(3, 'Сброс');
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('сброс убирает баллы', st.scores.t3[blitzId] === null, String(st.scores.t3[blitzId]));
 
+// блиц: список вопросов и ведение
+await evaluate(`document.querySelector('.tab[data-tab="contests"]').click()`);
+await sleep(300);
+await evaluate(`(() => {
+  const cards = [...document.querySelectorAll('.contest-card')];
+  const card = cards.find((c) => c.querySelector('select.kind-select').value === 'blitz');
+  const area = card.querySelectorAll('textarea')[1];
+  area.value = 'Кто пришёл на Хеллоуин в костюме бревна? | Аделя\\nКто носит трусы с акулами? | Никита';
+  area.dispatchEvent(new Event('change', { bubbles: true }));
+  return 'ok';
+})()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+const blitz = st.contests.find((c) => c.kind === 'blitz');
+ok('вопросы блица сохраняются',
+  (blitz.questions || []).length === 2 && blitz.questions[0].a === 'Аделя',
+  `вопросов ${(blitz.questions || []).length}`);
+
+await evaluate(`document.querySelector('.tab[data-tab="scores"]').click()`);
+await sleep(300);
+await pickContest('Блиц');
+ok('в блице появляется окно ведения', (await evaluate(`!document.querySelector('#quiz-box').hidden`)) === true);
+ok('виден первый вопрос',
+  (await evaluate(`document.querySelector('#quiz-q').textContent`)).startsWith('Кто пришёл на Хеллоуин'));
+ok('ответ закрыт', (await evaluate(`document.querySelector('#quiz-a').textContent`)) === 'Ответ скрыт');
+
+await evaluate(`document.querySelector('#quiz-screen').click()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('вопрос уходит на экран',
+  st.display.mode === 'quiz' && st.display.quiz.contestId === blitz.id && st.display.quiz.index === 0);
+
+await evaluate(`document.querySelector('#quiz-answer').click()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('ответ открывается по кнопке', st.display.quiz.revealed === true);
+ok('ответ виден и в пульте', (await evaluate(`document.querySelector('#quiz-a').textContent`)) === 'Аделя');
+
+await evaluate(`document.querySelector('#quiz-next').click()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('следующий вопрос снова прячет ответ',
+  st.display.quiz.index === 1 && st.display.quiz.revealed === false,
+  `вопрос ${st.display.quiz.index + 1}`);
+
+
 // 8. предсказания: случайное вытягивание и учёт использованных
 await evaluate(`document.querySelector('[data-tab="prophecy"]').click()`);
 await sleep(300);

@@ -337,6 +337,27 @@ function playDraw(slots, animate) {
   });
 }
 
+// Блиц: вопрос на весь экран, ответ открывается отдельной кнопкой.
+function quizView(d) {
+  const box = el('div', 'task-card quiz');
+  const contest = state.contests.find((c) => c.id === (d.quiz && d.quiz.contestId));
+  const list = (contest && contest.questions) || [];
+  const index = Math.max(0, Math.min(list.length - 1, (d.quiz && d.quiz.index) || 0));
+  const item = list[index];
+  if (!item) {
+    box.appendChild(el('div', 'task-label', 'Блиц'));
+    box.appendChild(el('p', 'empty', 'Вопросы не заданы'));
+    return box;
+  }
+  box.appendChild(el('div', 'task-label', `Вопрос ${index + 1} из ${list.length}`));
+  box.appendChild(el('div', 'quiz-question', item.q));
+  if (d.quiz.revealed) {
+    const answer = el('div', 'quiz-answer', item.a || '—');
+    box.appendChild(answer);
+  }
+  return box;
+}
+
 // Предсказание гостю: текст на весь экран.
 function prophecyView(pr) {
   const box = el('div', 'task-card prophecy');
@@ -446,6 +467,8 @@ function render() {
     stage.appendChild(rowsView(null));
   } else if (d.mode === 'task') {
     stage.appendChild(taskView(state.contests.find((c) => c.id === d.contestId)));
+  } else if (d.mode === 'quiz') {
+    stage.appendChild(quizView(d));
   } else if (d.mode === 'draw') {
     const dr = state.draw || {};
     const box = drawView(dr);

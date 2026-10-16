@@ -317,6 +317,28 @@ const minus = await waitFor(`(() => {
 })()`, '-10', 8000);
 ok('минус за отравленный стакан виден на экране', minus === '-10', String(minus));
 
+// --- блиц на экране ---
+await post((st) => {
+  const blitz = st.contests.find((c) => c.kind === 'blitz') || st.contests[0];
+  blitz.kind = 'blitz';
+  blitz.questions = [
+    { q: 'Кто пришёл на Хеллоуин в костюме бревна?', a: 'Аделя' },
+    { q: 'Кто носит трусы с акулами?', a: 'Никита' },
+  ];
+  st.display.mode = 'quiz';
+  st.display.quiz = { contestId: blitz.id, index: 0, revealed: false };
+});
+const question = await waitFor(`(document.querySelector('.quiz-question') || {}).textContent || ''`,
+  'Кто пришёл на Хеллоуин в костюме бревна?', 8000);
+ok('вопрос блица виден на экране', question === 'Кто пришёл на Хеллоуин в костюме бревна?', String(question));
+ok('ответ не показывается заранее', (await evaluate(`!document.querySelector('.quiz-answer')`)) === true);
+ok('видно номер вопроса',
+  (await evaluate(`document.querySelector('.quiz .task-label').textContent`)) === 'Вопрос 1 из 2');
+
+await post((st) => { st.display.quiz.revealed = true; });
+const shownAnswer = await waitFor(`(document.querySelector('.quiz-answer') || {}).textContent || ''`, 'Аделя', 8000);
+ok('ответ появляется по команде', shownAnswer === 'Аделя', String(shownAnswer));
+
 // --- предсказания ---
 const prophecyText = 'Зеркало видит тебя насквозь.';
 await post((st) => {

@@ -8,6 +8,7 @@
   --accent: #8df0e6;
   --accent-deep: #2ba79f;
   --danger: #ff8da8;
+  --gold: #efd08a;
   --font-display: 'Oswald', 'Arial Narrow', sans-serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -233,3 +234,12 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .kind-select { max-width: 11rem; }
 .draw-result { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.6rem; }
 .draw-line { color: var(--text); font-size: 0.95rem; }
+
+/* ведение блица */
+.quiz-box {
+  background: var(--card-2); border: 1px solid var(--line);
+  border-radius: 0.6rem; padding: 0.9rem 1rem; margin: 0.9rem 0 1.2rem; max-width: 62rem;
+}
+.quiz-q { font-size: 1.25rem; line-height: 1.4; }
+.quiz-a { margin-top: 0.5rem; color: var(--dim); font-size: 1.05rem; }
+.quiz-a.is-open { color: var(--gold); font-weight: 500; }

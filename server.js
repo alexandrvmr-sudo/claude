@@ -102,7 +102,7 @@ function defaultShow() {
 // Состояние эфира — что прямо сейчас на телевизоре. В библиотеке не хранится.
 function defaultDisplay() {
   return {
-    mode: 'standby', // standby | task | draw | leaderboard | contest | spotlight | winner | prophecy
+    mode: 'standby', // standby | task | draw | quiz | leaderboard | contest | spotlight | winner | prophecy
     contestId: null,
     spotlightId: null,
     reveal: {}, // ключ 'total:<pid>' или '<contestId>:<pid>' -> true
@@ -119,6 +119,8 @@ function defaultDisplay() {
     },
     // предсказание на экране
     prophecy: { text: '', who: '' },
+    // блиц: какой вопрос показан и открыт ли ответ
+    quiz: { contestId: null, index: 0, revealed: false },
     // режим «объявление результата»: баллы накручиваются от нуля
     count: {
       source: 'total', // 'total' или id конкурса
@@ -260,6 +262,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display.sound.music = { ...base.display.sound.music, ...(parsed.display?.sound?.music || {}) };
       state.display.sound.taskMusic = { ...base.display.sound.taskMusic, ...(parsed.display?.sound?.taskMusic || {}) };
       state.display.prophecy = { ...base.display.prophecy, ...(parsed.display?.prophecy || {}) };
+      state.display.quiz = { ...base.display.quiz, ...(parsed.display?.quiz || {}) };
       state.marks = parsed.marks || {};
       state.draw = { ...base.draw, ...(parsed.draw || {}) };
       state.prophecies = { ...base.prophecies, ...(parsed.prophecies || {}) };

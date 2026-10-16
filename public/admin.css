@@ -256,6 +256,6 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
   background: var(--card-2); border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.4rem 0.6rem;
 }
-.photo-row img { width: 2.4rem; height: 2.4rem; border-radius: 50%; object-fit: cover; }
+.photo-row img { width: 3.6rem; height: 3.6rem; border-radius: 50%; object-fit: cover; background: #0b1f23; }
 .photo-row .file { flex: 1 1 14rem; color: var(--dim); font-size: 0.9rem; word-break: break-all; }
 .photo-row select { max-width: 14rem; }

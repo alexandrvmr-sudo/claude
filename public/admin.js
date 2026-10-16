@@ -389,12 +389,15 @@ function renderPhotoQueue() {
 
   for (const item of photoQueue) {
     const row = el('div', 'photo-row');
+    const img = el('img');
     if (item.file) {
-      const img = el('img');
       img.src = URL.createObjectURL(item.file);
       img.onload = () => URL.revokeObjectURL(img.src);
-      row.appendChild(img);
+    } else {
+      img.src = `/avatars/${item.name.split('/').map(encodeURIComponent).join('/')}`;
     }
+    img.alt = item.name;
+    row.appendChild(img);
     row.appendChild(el('div', 'file', item.name));
     const sel = el('select');
     const none = el('option', null, '— пропустить —');

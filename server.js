@@ -580,6 +580,13 @@ export async function startServer({ dataDir, port, host } = {}) {
       return sendJson(res, 200, { ok: true, dir: AVATAR_DIR, files });
     }
 
+    // Показать файл из папки, чтобы в пульте был виден предпросмотр
+    if (pathname.startsWith('/avatars/')) {
+      const target = safeJoin(AVATAR_DIR, pathname.slice('/avatars'.length));
+      if (!target || !IMAGE_RE.test(target)) return sendJson(res, 400, { ok: false });
+      return serveFile(res, target, req.headers.range);
+    }
+
     // Взять конкретный файл из папки и положить его в фото участников
     if (pathname === '/api/avatars/import' && req.method === 'POST') {
       try {

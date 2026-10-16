@@ -67,6 +67,7 @@ const MODES = [
   { id: 'winner', label: 'Победитель' },
   { id: 'draw', label: 'Жеребьёвка' },
   { id: 'quiz', label: 'Блиц' },
+  { id: 'penalty', label: 'Штраф' },
   { id: 'prophecy', label: 'Предсказание' },
 ];
 
@@ -524,6 +525,20 @@ function renderContests() {
     });
     card.appendChild(about);
 
+    // у «Стаканов» свой список штрафных заданий — по одному в строке
+    if (MM.kindOf(c) === 'glasses') {
+      const fines = el('textarea');
+      fines.rows = 4;
+      fines.placeholder = 'Штрафные задания для тех, кто отказался пить: по одному в строке';
+      fines.value = (c.penalties || []).join('\n');
+      fines.addEventListener('change', () => {
+        c.penalties = fines.value.split('\n').map((t) => t.trim()).filter(Boolean);
+        push();
+      });
+      card.appendChild(fines);
+      card.appendChild(el('p', 'hint', `Штрафных заданий: ${(c.penalties || []).length}.`));
+    }
+
     // у блица свой список вопросов: строка «вопрос | ответ»
     if (MM.kindOf(c) === 'blitz') {
       const quiz = el('textarea');
@@ -739,6 +754,69 @@ $('#quiz-screen').addEventListener('click', () => {
   push();
 });
 
+// --- штрафные задания «Стаканов» ---
+function penaltyState() {
+  state.display.penalty = state.display.penalty || { contestId: null, index: 0, who: '' };
+  return state.display.penalty;
+}
+
+function penaltyList(contest) {
+  return (contest && contest.penalties) || [];
+}
+
+function showPenalty(index) {
+  const contest = scoreContest();
+  const list = penaltyList(contest);
+  if (!list.length) { alert('Для этого конкурса не заданы штрафные задания.'); return; }
+  const p = penaltyState();
+  p.contestId = contest.id;
+  p.index = ((index % list.length) + list.length) % list.length;
+  p.who = $('#penalty-who').value;
+  state.display.mode = 'penalty';
+  push();
+}
+
+function renderPenalty(contest) {
+  const box = $('#penalty-box');
+  const isGlasses = contest && MM.kindOf(contest) === 'glasses';
+  box.hidden = !isGlasses;
+  if (!isGlasses) return;
+
+  const list = penaltyList(contest);
+  const p = penaltyState();
+  const index = p.contestId === contest.id ? Math.max(0, Math.min(list.length - 1, p.index || 0)) : 0;
+  $('#penalty-count').textContent = list.length
+    ? `Задание ${index + 1} из ${list.length}. Штраф — тому, кто отказался пить победный стакан.`
+    : 'Заданий нет: впишите их на вкладке «Конкурсы».';
+  $('#penalty-text').textContent = list[index] || '—';
+
+  const who = $('#penalty-who');
+  const was = who.value || p.who || '';
+  who.innerHTML = '';
+  const none = el('option', null, '— без имени —');
+  none.value = '';
+  who.appendChild(none);
+  for (const person of state.participants) {
+    const o = el('option', null, person.name || 'Без имени');
+    o.value = person.name || '';
+    who.appendChild(o);
+  }
+  who.value = was;
+}
+
+$('#penalty-draw').addEventListener('click', () => {
+  const list = penaltyList(scoreContest());
+  if (!list.length) { alert('Для этого конкурса не заданы штрафные задания.'); return; }
+  showPenalty(Math.floor(Math.random() * list.length));
+});
+$('#penalty-next').addEventListener('click', () => showPenalty((penaltyState().index || 0) + 1));
+$('#penalty-screen').addEventListener('click', () => showPenalty(penaltyState().index || 0));
+$('#penalty-who').addEventListener('change', () => {
+  const p = penaltyState();
+  p.who = $('#penalty-who').value;
+  push();
+});
+
 function renderScoreCards() {
   const sel = $('#score-contest');
   const prev = sel.value;
@@ -756,11 +834,13 @@ function renderScoreCards() {
   if (!contest) {
     $('#score-kind').textContent = 'Сначала добавьте конкурс.';
     renderQuiz(null);
+    renderPenalty(null);
     return;
   }
   const kindId = MM.kindOf(contest);
   $('#score-kind').textContent = kindHint(kindId);
   renderQuiz(contest);
+  renderPenalty(contest);
 
   if (!state.participants.length) {
     host.appendChild(el('p', 'hint', 'Сначала добавьте участников.'));

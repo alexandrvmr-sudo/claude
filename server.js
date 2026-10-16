@@ -69,6 +69,13 @@ const DEFAULT_PROPHECIES = [
   'Разговор, которого вы избегаете, принесёт облегчение обоим.',
 ];
 
+// Штрафные задания для «Стаканов»: их выполняет тот, кто отказался пить.
+const DEFAULT_PENALTIES = [
+  'За 30 секунд станцуй максимально сексуальный танец под детскую песню, которую выберут соперники.',
+  'Сделай трём участникам комплименты, которые сначала звучат приятно, но заканчиваются максимально неожиданно.',
+  '«Корпоратив мечты»: произнеси речь начальника, который объявляет сотрудникам, что зарплаты не будет, зато всем выдадут по почётной грамоте.',
+];
+
 function defaultShow() {
   return {
     settings: { title: 'Битва сильнейших', subtitle: 'Волшебное зеркало' },
@@ -78,7 +85,14 @@ function defaultShow() {
       { id: id('c'), name: 'Чёрный ящик', kind: 'blackbox', description: 'Что лежит в ящике? Живое или неживое, цвет, количество и что это.' },
       { id: id('c'), name: 'Русская рулетка', kind: 'roulette', description: 'Пять пистолетов. Заряжен только один.' },
       { id: id('c'), name: 'Книжный червь', kind: 'books', description: 'Десять книг. В одной из них деньги.' },
-      { id: id('c'), name: 'Стаканы', kind: 'glasses', description: 'Пять стаканов: два отравленных, один победный, два обычных.' },
+      {
+        id: id('c'),
+        name: 'Стаканы',
+        kind: 'glasses',
+        description: 'Пять стаканов: два отравленных, один победный, два обычных.',
+        // штраф тому, кто отказался пить победный стакан
+        penalties: [...DEFAULT_PENALTIES],
+      },
       { id: id('c'), name: 'Блиц: кто есть кто', kind: 'blitz', description: 'Вопросы об участниках. Отвечает тот, кто первый.' },
       { id: id('c'), name: 'Финал вслепую', kind: 'final', description: 'Финалисты с завязанными глазами угадывают, кто перед ними.' },
     ],
@@ -102,7 +116,7 @@ function defaultShow() {
 // Состояние эфира — что прямо сейчас на телевизоре. В библиотеке не хранится.
 function defaultDisplay() {
   return {
-    mode: 'standby', // standby | task | draw | quiz | leaderboard | contest | spotlight | winner | prophecy
+    mode: 'standby', // standby | task | draw | quiz | penalty | leaderboard | contest | spotlight | winner | prophecy
     contestId: null,
     spotlightId: null,
     reveal: {}, // ключ 'total:<pid>' или '<contestId>:<pid>' -> true
@@ -121,6 +135,8 @@ function defaultDisplay() {
     prophecy: { text: '', who: '' },
     // блиц: какой вопрос показан и открыт ли ответ
     quiz: { contestId: null, index: 0, revealed: false },
+    // штрафное задание на экране
+    penalty: { contestId: null, index: 0, who: '' },
     // режим «объявление результата»: баллы накручиваются от нуля
     count: {
       source: 'total', // 'total' или id конкурса
@@ -263,6 +279,7 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display.sound.taskMusic = { ...base.display.sound.taskMusic, ...(parsed.display?.sound?.taskMusic || {}) };
       state.display.prophecy = { ...base.display.prophecy, ...(parsed.display?.prophecy || {}) };
       state.display.quiz = { ...base.display.quiz, ...(parsed.display?.quiz || {}) };
+      state.display.penalty = { ...base.display.penalty, ...(parsed.display?.penalty || {}) };
       state.marks = parsed.marks || {};
       state.draw = { ...base.draw, ...(parsed.draw || {}) };
       state.prophecies = { ...base.prophecies, ...(parsed.prophecies || {}) };
@@ -518,6 +535,11 @@ export async function startServer({ dataDir, port, host } = {}) {
     // Заготовленные предсказания: пульт умеет вернуть список к ним
     if (pathname === '/api/prophecies/default' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, list: DEFAULT_PROPHECIES });
+    }
+
+    // Заготовленные штрафные задания
+    if (pathname === '/api/penalties/default' && req.method === 'GET') {
+      return sendJson(res, 200, { ok: true, list: DEFAULT_PENALTIES });
     }
 
     // Список музыки для заданий: что лежит в public/music/tasks.

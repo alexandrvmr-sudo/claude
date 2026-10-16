@@ -358,6 +358,26 @@ function quizView(d) {
   return box;
 }
 
+// Штрафное задание: его выполняет тот, кто отказался пить победный стакан.
+function penaltyView(d) {
+  const box = el('div', 'task-card penalty');
+  const contest = state.contests.find((c) => c.id === (d.penalty && d.penalty.contestId));
+  const list = (contest && contest.penalties) || [];
+  const index = Math.max(0, Math.min(list.length - 1, (d.penalty && d.penalty.index) || 0));
+  box.appendChild(el('div', 'task-label', 'Штрафное задание'));
+  if (d.penalty && d.penalty.who) box.appendChild(el('div', 'task-name', d.penalty.who));
+  const text = el('div', 'task-text penalty-text');
+  if (list[index]) {
+    for (const line of String(list[index]).split(/\n+/)) {
+      if (line.trim()) text.appendChild(el('p', null, line.trim()));
+    }
+  } else {
+    text.appendChild(el('p', null, 'Задания не заданы'));
+  }
+  box.appendChild(text);
+  return box;
+}
+
 // Предсказание гостю: текст на весь экран.
 function prophecyView(pr) {
   const box = el('div', 'task-card prophecy');
@@ -467,6 +487,8 @@ function render() {
     stage.appendChild(rowsView(null));
   } else if (d.mode === 'task') {
     stage.appendChild(taskView(state.contests.find((c) => c.id === d.contestId)));
+  } else if (d.mode === 'penalty') {
+    stage.appendChild(penaltyView(d));
   } else if (d.mode === 'quiz') {
     stage.appendChild(quizView(d));
   } else if (d.mode === 'draw') {

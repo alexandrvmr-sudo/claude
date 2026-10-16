@@ -387,6 +387,51 @@ await clickOn(3, 'Сброс');
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('сброс убирает баллы', st.scores.t3[blitzId] === null, String(st.scores.t3[blitzId]));
 
+// штрафные задания «Стаканов»
+await evaluate(`document.querySelector('.tab[data-tab="contests"]').click()`);
+await sleep(300);
+await evaluate(`(() => {
+  const cards = [...document.querySelectorAll('.contest-card')];
+  const card = cards.find((c) => c.querySelector('select.kind-select').value === 'glasses');
+  const area = card.querySelectorAll('textarea')[1];
+  area.value = 'Станцуй под детскую песню\\nСкажи три странных комплимента';
+  area.dispatchEvent(new Event('change', { bubbles: true }));
+  return 'ok';
+})()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+const glasses = st.contests.find((c) => c.kind === 'glasses');
+ok('штрафные задания сохраняются',
+  (glasses.penalties || []).length === 2 && glasses.penalties[0] === 'Станцуй под детскую песню',
+  `заданий ${(glasses.penalties || []).length}`);
+
+await evaluate(`document.querySelector('.tab[data-tab="scores"]').click()`);
+await sleep(300);
+await pickContest('Стаканы');
+ok('у «Стаканов» появляется окно штрафа', (await evaluate(`!document.querySelector('#penalty-box').hidden`)) === true);
+
+await evaluate(`(() => { const sel = document.querySelector('#penalty-who');
+  sel.value = 'Борис'; sel.dispatchEvent(new Event('change')); return 'ok'; })()`);
+await sleep(400);
+await evaluate(`document.querySelector('#penalty-draw').click()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('штраф уходит на экран с именем',
+  st.display.mode === 'penalty' && st.display.penalty.contestId === glasses.id
+  && st.display.penalty.who === 'Борис',
+  `${st.display.mode}, кому «${st.display.penalty.who}»`);
+
+const firstPenalty = st.display.penalty.index;
+await evaluate(`document.querySelector('#penalty-next').click()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('кнопка «другое задание» листает', st.display.penalty.index !== firstPenalty,
+  `было ${firstPenalty}, стало ${st.display.penalty.index}`);
+
+const defaults = await (await fetch(`${APP}/api/penalties/default`)).json();
+ok('заготовки штрафных заданий на месте', defaults.ok && defaults.list.length === 3,
+  `${defaults.list.length} шт.`);
+
 // блиц: список вопросов и ведение
 await evaluate(`document.querySelector('.tab[data-tab="contests"]').click()`);
 await sleep(300);

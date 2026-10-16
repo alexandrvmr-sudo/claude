@@ -317,6 +317,20 @@ const minus = await waitFor(`(() => {
 })()`, '-10', 8000);
 ok('минус за отравленный стакан виден на экране', minus === '-10', String(minus));
 
+// --- штрафное задание на экране ---
+await post((st) => {
+  const glasses = st.contests.find((c) => c.kind === 'glasses') || st.contests[0];
+  glasses.kind = 'glasses';
+  glasses.penalties = ['Станцуй под детскую песню', 'Скажи три странных комплимента'];
+  st.display.mode = 'penalty';
+  st.display.penalty = { contestId: glasses.id, index: 1, who: 'Борис Ким' };
+});
+const fine = await waitFor(`(document.querySelector('.penalty-text') || {}).textContent || ''`,
+  'Скажи три странных комплимента', 8000);
+ok('штрафное задание видно на экране', fine === 'Скажи три странных комплимента', String(fine));
+ok('подписано, кому штраф',
+  (await evaluate(`document.querySelector('.penalty .task-name').textContent`)) === 'Борис Ким');
+
 // --- блиц на экране ---
 await post((st) => {
   const blitz = st.contests.find((c) => c.kind === 'blitz') || st.contests[0];

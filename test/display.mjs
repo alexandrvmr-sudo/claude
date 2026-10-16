@@ -57,8 +57,12 @@ const post = async (fn) => {
 };
 await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(base) });
 
+// Свой профиль браузера на каждый прогон: иначе Chromium подхватывает
+// уже открытую вкладку прошлого запуска вместе с её состоянием.
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirror-chrome-'));
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
+  `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check',
   '--autoplay-policy=no-user-gesture-required', // в тесте звук без нажатия клавиши
   `--remote-debugging-port=${CDP_PORT}`, '--window-size=1920,1080', `${APP}/display.html`,
 ], { stdio: 'ignore' });
@@ -267,89 +271,61 @@ const onBoard = await waitFor(`(() => {
 ok('на рейтинге звучит музыка заданий', onBoard === true);
 dropTmp();
 
-// --- голос зеркала и предсказания ---
-const prophecyText = 'Проверка голоса: зеркало видит тебя.';
+// --- жеребьёвка на экране ---
+await post((st) => {
+  st.draw = {
+    runId: 1,
+    kind: 'groups',
+    contestId: st.contests[0].id,
+    groups: [['u0', 'u1', 'u2', 'u3'], ['u4', 'u5', 'u6'], ['u7', 'u8', 'u9']],
+    order: [],
+    finalists: [],
+    calls: [],
+  };
+  st.display.mode = 'draw';
+});
+await sleep(1100);
+const spinning = await evaluate(`document.querySelectorAll('.draw-name.is-locked').length`);
+ok('барабан крутится, а не показывает всё сразу', spinning < 10, `закреплено ${spinning}`);
+const locked = await waitFor(`document.querySelectorAll('.draw-name.is-locked').length`, 10, 12000);
+ok('все имена встают на места', locked === 10, `закреплено ${locked}`);
+const grid = await evaluate(`[...document.querySelectorAll('.draw-group')]
+  .map((g) => [...g.querySelectorAll('.draw-name')].map((n) => n.textContent).join(',')).join(' | ')`);
+ok('тройки собраны правильно', grid.startsWith('Анна Зорина,Борис Ким,Вера Лис,Глеб Орлов'), String(grid));
+
+// финальный вызов: к финалисту выходит один участник
+await post((st) => {
+  st.draw = { runId: 2, kind: 'final', contestId: null, groups: [], order: [], finalists: ['u0', 'u1'], calls: [{ finalist: 'u0', guest: 'u5' }] };
+  st.display.mode = 'draw';
+});
+const called = await waitFor(`(document.querySelector('.draw-name.is-locked') || {}).textContent || ''`, 'Егор Шах', 12000);
+ok('зеркало вызывает участника к финалисту', called === 'Егор Шах', String(called));
+ok('видно, к кому выходят',
+  (await evaluate(`document.querySelector('.draw-call-to').textContent`)) === 'К Анна Зорина выходит');
+
+// минусовые баллы на экране
+await post((st) => {
+  const cid = st.contests[0].id;
+  st.scores.u0 = { ...(st.scores.u0 || {}), [cid]: -10 };
+  st.display.mode = 'contest';
+  st.display.contestId = cid;
+  st.display.reveal = { [`${cid}:u0`]: true };
+});
+const minus = await waitFor(`(() => {
+  const row = [...document.querySelectorAll('.rows .row')].find((r) => r.textContent.includes('Анна Зорина'));
+  return row ? row.querySelector('.score').textContent : '';
+})()`, '-10', 8000);
+ok('минус за отравленный стакан виден на экране', minus === '-10', String(minus));
+
+// --- предсказания ---
+const prophecyText = 'Зеркало видит тебя насквозь.';
 await post((st) => {
   st.display.mode = 'prophecy';
   st.display.prophecy = { text: prophecyText, who: 'Ирина' };
-  st.display.sound.voice = { on: true, volume: 1, name: '' };
 });
 const prShown = await waitFor(`(document.querySelector('.prophecy-text p') || {}).textContent || ''`, prophecyText);
 ok('предсказание видно на экране', prShown === prophecyText, String(prShown));
 ok('имя гостя подписано', (await evaluate(`(document.querySelector('.prophecy .task-name') || {}).textContent || ''`)) === 'Ирина');
-
-const voiceInfo = await (await fetch(`${APP}/api/voice`)).json();
-if (!voiceInfo.engine) {
-  ok('голос: системный синтезатор не найден, проверку пропускаем', true, 'на эту машину не установлен say/espeak');
-} else {
-  const made = await (await fetch(`${APP}/api/voice`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: prophecyText }),
-  })).json();
-  ok('сервер синтезировал речь', made.ok && /^\/voice\/.+\.wav$/.test(made.url || ''), String(made.url || made.error));
-
-  const head = await fetch(`${APP}${made.url}`);
-  ok('файл речи отдаётся', head.ok && Number(head.headers.get('content-length')) > 1000,
-    `${head.headers.get('content-length')} байт`);
-
-  // повторный запрос берёт готовый файл из кэша — адрес тот же
-  const again = await (await fetch(`${APP}/api/voice`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: prophecyText }),
-  })).json();
-  ok('один и тот же текст не синтезируется дважды', again.url === made.url);
-
-  // Характеры голоса: экран замедляет запись, поэтому синтезатор читает быстрее.
-  // Итоговая длительность фразы должна оставаться примерно одинаковой.
-  const RATES = { soft: 0.92, anon: 0.86, demon: 0.76 };
-  const spokenSeconds = async (style) => {
-    const r = await (await fetch(`${APP}/api/voice`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'Зеркало видит тебя насквозь.', style }),
-    })).json();
-    const buf = new DataView(await (await fetch(`${APP}${r.url}`)).arrayBuffer());
-    const byteRate = buf.getUint32(28, true);
-    return { url: r.url, played: ((buf.byteLength - 44) / byteRate) / RATES[style] };
-  };
-  const soft = await spokenSeconds('soft');
-  const demon = await spokenSeconds('demon');
-  ok('у характеров голоса свои записи', soft.url !== demon.url);
-  ok('низкий голос не растягивает фразу',
-    Math.abs(soft.played - demon.played) / soft.played < 0.15,
-    `${soft.played.toFixed(2)} с и ${demon.played.toFixed(2)} с`);
-
-  await post((st) => { st.display.speech = { runId: 1, text: prophecyText, url: made.url }; });
-  const speaking = await waitFor('MMSound.speaking()', true, 12000);
-  ok('зеркало читает предсказание голосом', speaking === true);
-
-  // пока говорит голос — музыка приглушена
-  const ducked = await evaluate(`(() => {
-    const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
-    return a ? Math.round(a.volume * 100) : -1;
-  })()`);
-  ok('музыка приглушается под голос', ducked === -1 || ducked <= 20, `громкость ${ducked}%`);
-
-  await post((st) => { st.display.speech = { runId: 2, text: '', url: '' }; });
-  const quiet = await waitFor('MMSound.speaking()', false, 6000);
-  ok('кнопка «Замолчать» обрывает голос', quiet === false);
-
-  const back = await waitFor(`(() => {
-    const a = [...document.querySelectorAll('audio')].find((x) => !x.paused);
-    return a ? a.volume > 0.4 : true;
-  })()`, true, 8000);
-  ok('после голоса музыка возвращается', back === true);
-
-  // голос выключен — зеркало молчит
-  await post((st) => {
-    st.display.sound.voice = { on: false, volume: 1, name: '' };
-    st.display.speech = { runId: 3, text: prophecyText, url: made.url };
-  });
-  await sleep(1200);
-  ok('выключенный голос молчит', (await evaluate('MMSound.speaking()')) === false);
-}
 
 const defaults = await (await fetch(`${APP}/api/prophecies/default`)).json();
 ok('заготовки предсказаний на месте', defaults.ok && defaults.list.length >= 20, `${defaults.list.length} шт.`);
@@ -360,5 +336,7 @@ console.log(checks.join('\n'));
 ws.close();
 chrome.kill();
 server.kill();
-try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
+for (const dir of [dataDir, profileDir]) {
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
+}
 process.exit(checks.some((c) => c.startsWith('FAIL')) ? 1 : 0);

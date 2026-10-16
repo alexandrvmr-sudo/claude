@@ -26,7 +26,7 @@
   <button class="tab is-active" data-tab="shows">Шоу</button>
   <button class="tab" data-tab="show">Эфир</button>
   <button class="tab" data-tab="people">Участники</button>
-  <button class="tab" data-tab="tournament">Турнир</button>
+  <button class="tab" data-tab="draw">Жеребьёвка</button>
   <button class="tab" data-tab="contests">Конкурсы</button>
   <button class="tab" data-tab="scores">Баллы</button>
   <button class="tab" data-tab="prophecy">Предсказания</button>
@@ -68,12 +68,6 @@
           <select id="mode-contest"></select>
         </div>
         <p class="hint" id="now-track">—</p>
-
-        <div class="voice-row">
-          <button id="speak-task" class="btn">Озвучить задание</button>
-          <button id="speak-stop" class="btn">Замолчать</button>
-        </div>
-        <p class="hint" id="voice-now">—</p>
 
         <div class="field" id="person-picker" hidden>
           <label>Участник на экране</label>
@@ -143,37 +137,7 @@
     <div class="people" id="people"></div>
   </section>
 
-  <!-- ТУРНИР -->
-  <section class="panel" data-panel="tournament" hidden>
-    <h2>Турнирный режим</h2>
-    <label class="check"><input id="tour-on" type="checkbox"> Участники сражаются группами</label>
-    <p class="hint">Все делятся на группы, в каждой свои конкурсы. Из каждой группы дальше
-      проходят лучшие, из прошедших собирается следующий тур — и так до финала.</p>
-
-    <div id="tour-setup" hidden>
-      <div class="two">
-        <div class="field">
-          <label>По сколько человек в группе</label>
-          <input id="tour-size" type="number" min="2" max="8" step="1">
-        </div>
-        <div class="field">
-          <label>Сколько проходит дальше из каждой группы</label>
-          <input id="tour-advance" type="number" min="1" max="7" step="1">
-        </div>
-      </div>
-      <div class="reveal-actions">
-        <button id="tour-start" class="btn btn-gold">Сформировать первый тур</button>
-        <button id="tour-reshuffle" class="btn">Перемешать группы</button>
-        <button id="tour-reset" class="btn btn-danger">Сбросить турнир</button>
-      </div>
-      <p class="hint" id="tour-hint">—</p>
-    </div>
-
-    <div id="tour-current"></div>
-    <div id="tour-history"></div>
-  </section>
-
-  <!-- КОНКУРСЫ -->
+    <!-- КОНКУРСЫ -->
   <section class="panel" data-panel="contests" hidden>
     <h2>Конкурсы</h2>
     <form id="add-contest" class="row-form">
@@ -186,9 +150,48 @@
   <!-- БАЛЛЫ -->
   <section class="panel" data-panel="scores" hidden>
     <h2>Баллы</h2>
+    <div class="field" style="max-width: 28rem;">
+      <label>Конкурс</label>
+      <select id="score-contest"></select>
+    </div>
+    <p class="hint" id="score-kind">—</p>
+    <div id="score-cards" class="score-cards"></div>
+
+    <h2 class="mt">Общий зачёт</h2>
     <p class="hint">Баллы сохраняются сразу. На экране они появятся только после «открытия» во вкладке «Эфир».</p>
-    <p class="hint" id="scores-note" hidden></p>
     <div class="table-wrap"><table id="score-table"></table></div>
+  </section>
+
+  <!-- ЖЕРЕБЬЁВКА -->
+  <section class="panel" data-panel="draw" hidden>
+    <h2>Жеребьёвка</h2>
+    <p class="hint">Разыгрывает пульт, а зеркало крутит барабан с именами и по одному ставит их на места.
+      Нажмите «Показать на экране», чтобы гости увидели розыгрыш.</p>
+    <div class="field" style="max-width: 28rem;">
+      <label>Для какого конкурса</label>
+      <select id="draw-contest"></select>
+    </div>
+    <div class="reveal-actions">
+      <button id="draw-groups" class="btn btn-gold big">Разбить на тройки</button>
+      <button id="draw-order" class="btn">Очередь по одному</button>
+      <button id="draw-show" class="btn">Показать на экране</button>
+    </div>
+    <p class="hint" id="draw-status">—</p>
+    <div id="draw-result" class="draw-result"></div>
+
+    <h2 class="mt">Финальная жеребьёвка</h2>
+    <p class="hint">Двое финалистов сами в розыгрыш не попадают: зеркало вызывает к ним по одному из остальных.</p>
+    <div class="two">
+      <div class="field"><label>Финалист 1</label><select id="final-a"></select></div>
+      <div class="field"><label>Финалист 2</label><select id="final-b"></select></div>
+    </div>
+    <div class="reveal-actions">
+      <button id="final-top" class="btn">Взять двух лидеров</button>
+      <button id="final-call-a" class="btn btn-gold">Вызвать к первому</button>
+      <button id="final-call-b" class="btn btn-gold">Вызвать ко второму</button>
+      <button id="final-reset" class="btn">Сбросить вызовы</button>
+    </div>
+    <p class="hint" id="final-status">—</p>
   </section>
 
   <!-- ПРЕДСКАЗАНИЯ -->
@@ -251,29 +254,6 @@
     </div>
     <button id="task-music-scan" class="btn">Перечитать папку</button>
     <p class="hint" id="task-music-found">—</p>
-    <h2 class="mt">Голос зеркала</h2>
-    <p class="hint">Голос читает задания и предсказания: мужской, искажённый — как у «анонимуса».
-      Он собирается из системного синтезатора речи, поэтому отдельных файлов не нужно.</p>
-    <label class="check"><input id="voice-on" type="checkbox"> Голос включён</label>
-    <div class="field" style="max-width: 24rem; margin-top: 0.7rem;">
-      <label>Громкость голоса: <span id="voice-volume-value">100%</span></label>
-      <input id="voice-volume" type="range" min="0" max="100" step="5">
-    </div>
-    <div class="field" style="max-width: 24rem;">
-      <label>Характер голоса</label>
-      <select id="voice-style">
-        <option value="soft">Тихий шёпот — почти человеческий</option>
-        <option value="anon">Анонимус — низкий и искажённый</option>
-        <option value="demon">Демон — очень низкий, с эхом</option>
-      </select>
-    </div>
-    <div class="field" style="max-width: 24rem;">
-      <label>Системный голос</label>
-      <select id="voice-name"></select>
-    </div>
-    <button id="voice-test" class="btn">Проверить голос</button>
-    <p class="hint" id="voice-engine">—</p>
-
     <button id="sound-test" class="btn" style="margin-top: 0.8rem;">Проверить звук на телевизоре</button>
     <h2 class="mt">Опасная зона</h2>
     <button id="clear-scores" class="btn">Обнулить все баллы</button>

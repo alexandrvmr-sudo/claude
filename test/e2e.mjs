@@ -36,6 +36,7 @@ for (let i = 0; i < 40; i++) {
   try { await fetch(`${APP}/api/state`); break; } catch { await sleep(250); }
 }
 
+
 const PORT = 9333;
 // Отсутствие программы-открывалки не должно ронять уже поднятый сервер
 {
@@ -66,8 +67,12 @@ const PORT = 9333;
   probe.kill();
 }
 
+// Свой профиль браузера на каждый прогон: иначе Chromium подхватывает
+// уже открытую вкладку прошлого запуска вместе с её состоянием.
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirror-chrome-'));
 const chrome = spawn(CHROME, [
-  '--headless=new', '--disable-gpu', '--no-sandbox', `--remote-debugging-port=${PORT}`,
+  '--headless=new', '--disable-gpu', '--no-sandbox',
+  `--user-data-dir=${profileDir}`, '--no-first-run', '--no-default-browser-check', `--remote-debugging-port=${PORT}`,
   '--window-size=1500,1000', `${APP}/admin.html`,
 ], { stdio: 'ignore' });
 
@@ -142,16 +147,23 @@ st = await (await fetch(`${APP}/api/state`)).json();
 ok('форма добавляет участников', st.participants.length === 3, `их ${st.participants.length}`);
 ok('подпись сохраняется', st.participants[0].note === 'Тверь');
 
-// 2. ставим баллы в таблице
-await evaluate(`document.querySelector('.tab[data-tab="scores"]').click()`);
-await sleep(200);
-await evaluate(`(() => { const vals = [3,5,9, 7,7,7, 10,2,4];
-  document.querySelectorAll('#score-table input[type=number]').forEach((inp, i) => {
-    inp.value = vals[i]; inp.dispatchEvent(new Event('input', { bubbles: true })); }); })()`);
-await sleep(700);
+// 2. баллы: ставим через API (формы начисления проверяются ниже, по типам конкурсов)
 st = await (await fetch(`${APP}/api/state`)).json();
-const totals = st.participants.map((p) => st.contests.reduce((s, c) => s + (st.scores[p.id][c.id] || 0), 0));
+const cids = st.contests.map((c) => c.id);
+st.scores = {
+  [st.participants[0].id]: { [cids[0]]: 3, [cids[1]]: 5, [cids[2]]: 9 },
+  [st.participants[1].id]: { [cids[0]]: 7, [cids[1]]: 7, [cids[2]]: 7 },
+  [st.participants[2].id]: { [cids[0]]: 10, [cids[1]]: 2, [cids[2]]: 4 },
+};
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+const totals = st.participants.map((p) => st.contests.reduce((sum, c) => sum + ((st.scores[p.id] || {})[c.id] || 0), 0));
 ok('баллы доходят до сервера', JSON.stringify(totals) === JSON.stringify([17, 21, 16]), totals.join('/'));
+await evaluate(`document.querySelector('.tab[data-tab="scores"]').click()`);
+await sleep(300);
+ok('общий зачёт показывает суммы',
+  (await evaluate(`[...document.querySelectorAll('#score-table tr')].slice(1).map(r => r.cells[r.cells.length-1].textContent).join('/')`)) === '17/21/16');
 
 // 3. открываем по одному — должен идти с последнего места
 await evaluate(`document.querySelector('.tab[data-tab="show"]').click()`);
@@ -210,6 +222,7 @@ await evaluate(`document.querySelector('#count-reset').click()`);
 await sleep(250);
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('кнопка «вернуть на 0» работает', st.display.count.runId === 0);
+
 
 // 6b. второе шоу и возврат к первому
 await evaluate(`document.querySelector('.tab[data-tab="shows"]').click()`);
@@ -277,63 +290,104 @@ await evaluate(`(() => { const f = document.querySelector('#add-show');
   f.name.value = 'Турнир'; f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })); })()`);
 await sleep(600);
 
-// шестерых заводим напрямую — проверяем сам турнир, а не форму участников
+// --- жеребьёвка и типы конкурсов ---
+// десять участников заводим напрямую: проверяем механику, а не форму
 st = await (await fetch(`${APP}/api/state`)).json();
-st.participants = ['Анна', 'Борис', 'Вера', 'Глеб', 'Дина', 'Егор']
+st.participants = ['Анна', 'Борис', 'Вера', 'Глеб', 'Дина', 'Егор', 'Жанна', 'Зоя', 'Иван', 'Кира']
   .map((name, i) => ({ id: `t${i}`, name, note: '', photo: '', out: false, hidden: false }));
 st.scores = {};
+st.marks = {};
 await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
 await sleep(400);
 
-await evaluate(`document.querySelector('.tab[data-tab="tournament"]').click()`);
+await evaluate(`document.querySelector('.tab[data-tab="draw"]').click()`);
 await sleep(300);
-await evaluate(`(() => { const c = document.querySelector('#tour-on');
-  c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-await sleep(400);
-await evaluate(`document.querySelector('#tour-start').click()`);
-await sleep(600);
-
-st = await (await fetch(`${APP}/api/state`)).json();
-let round = st.tournament.rounds[0];
-ok('первый тур — две тройки',
-  st.tournament.rounds.length === 1 && round.groups.length === 2
-  && round.groups.every((g) => g.members.length === 3),
-  round.groups.map((g) => g.members.length).join('+'));
-ok('у тура свой конкурс', st.contests.filter((c) => c.roundId === round.id).length === 1);
-ok('режим «Сетка тура» появился в эфире',
-  await evaluate(`[...document.querySelectorAll('#modes .btn')].some(b => b.textContent === 'Сетка тура')`));
-
-// баллы: в каждой тройке у первых двоих больше
-const roundContest = st.contests.find((c) => c.roundId === round.id).id;
-st.scores = {};
-for (const g of round.groups) {
-  g.members.forEach((pid, i) => { st.scores[pid] = { [roundContest]: 10 - i * 3 }; });
-}
-await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
-await sleep(500);
-
-await evaluate(`[...document.querySelectorAll('#tour-current button')].find(b => b.textContent === 'Подвести итоги тура').click()`);
-await sleep(600);
-st = await (await fetch(`${APP}/api/state`)).json();
-round = st.tournament.rounds[0];
-const perGroup = round.groups.map((g) => g.members.filter((pid) => round.advancing.includes(pid)).length);
-ok('из каждой тройки проходят двое',
-  round.finished && round.advancing.length === 4 && perGroup.every((n) => n === 2),
-  `прошли ${round.advancing.length}, по группам ${perGroup.join('+')}`);
-ok('проходят те, у кого больше баллов',
-  round.groups.every((g) => round.advancing.includes(g.members[0]) && round.advancing.includes(g.members[1])));
-
-await evaluate(`[...document.querySelectorAll('#tour-current button')].find(b => b.textContent === 'Сформировать следующий тур').click()`);
+await evaluate(`document.querySelector('#draw-groups').click()`);
 await sleep(700);
 st = await (await fetch(`${APP}/api/state`)).json();
-const final = st.tournament.rounds[1];
-ok('четверо прошедших собираются в финал',
-  st.tournament.rounds.length === 2 && final && final.groups.length === 1
-  && final.groups[0].members.length === 4 && final.name === 'Финал',
-  final ? `${final.name}, групп ${final.groups.length}` : 'тура нет');
-ok('финал открыт как текущий тур', st.tournament.currentRoundId === final.id);
+const sizes = st.draw.groups.map((g) => g.length).sort();
+ok('десять человек делятся на тройки',
+  st.draw.groups.length === 3 && sizes.join('+') === '3+3+4'
+  && new Set(st.draw.groups.flat()).size === 10,
+  sizes.join('+'));
+ok('жеребьёвка сразу уходит на экран', st.display.mode === 'draw' && st.draw.runId > 0);
 
-// 8. предсказания: случайное вытягивание, озвучка, учёт использованных
+await evaluate(`document.querySelector('#draw-order').click()`);
+await sleep(700);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('очередь — все участники по одному разу',
+  st.draw.kind === 'order' && new Set(st.draw.order).size === 10, `${st.draw.order.length}`);
+
+// финал: двое лидеров не попадают в розыгрыш
+st.scores = { t3: { [st.contests[0].id]: 60 }, t7: { [st.contests[0].id]: 50 } };
+await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
+await sleep(400);
+await evaluate(`document.querySelector('#final-top').click()`);
+await sleep(500);
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('в финал берём двух лидеров', st.draw.finalists.join(',') === 't3,t7', st.draw.finalists.join(','));
+
+await evaluate(`document.querySelector('#final-call-a').click()`);
+await sleep(500);
+await evaluate(`document.querySelector('#final-call-b').click()`);
+await sleep(600);
+st = await (await fetch(`${APP}/api/state`)).json();
+const calls = st.draw.calls || [];
+ok('к каждому финалисту вышло по одному',
+  calls.length === 2 && calls[0].finalist === 't3' && calls[1].finalist === 't7',
+  calls.map((c) => `${c.finalist}->${c.guest}`).join(' '));
+ok('финалисты сами не выпадают',
+  calls.every((c) => !st.draw.finalists.includes(c.guest)) && calls[0].guest !== calls[1].guest);
+
+// начисление по типам конкурсов
+await evaluate(`document.querySelector('.tab[data-tab="scores"]').click()`);
+await sleep(400);
+const pickContest = async (name) => {
+  await evaluate(`(() => { const sel = document.querySelector('#score-contest');
+    sel.value = [...sel.options].find((o) => o.textContent.startsWith('${name}')).value;
+    sel.dispatchEvent(new Event('change')); return 'ok'; })()`);
+  await sleep(400);
+};
+const clickOn = async (index, label) => {
+  await evaluate(`(() => { const card = document.querySelectorAll('#score-cards .score-card')[${index}];
+    [...card.querySelectorAll('button')].find((b) => b.textContent.startsWith('${label}')).click();
+    return 'ok'; })()`);
+  await sleep(450);
+};
+
+await pickContest('Чёрный ящик');
+ok('у чёрного ящика своя форма начисления',
+  /Что это \+30/.test(await evaluate(`document.querySelector('#score-kind').textContent`)));
+for (const label of ['Живое', 'Цвет', 'Что это', 'Рискнул']) await clickOn(0, label);
+st = await (await fetch(`${APP}/api/state`)).json();
+const boxId = st.contests.find((c) => c.kind === 'blackbox').id;
+ok('чёрный ящик складывает баллы', st.scores.t0[boxId] === 60, String(st.scores.t0[boxId]));
+
+await pickContest('Стаканы');
+await clickOn(1, 'Отравленный');
+st = await (await fetch(`${APP}/api/state`)).json();
+const glassId = st.contests.find((c) => c.kind === 'glasses').id;
+ok('отравленный стакан уводит в минус', st.scores.t1[glassId] === -10, String(st.scores.t1[glassId]));
+
+await pickContest('Книжный червь');
+await clickOn(2, 'Пустая книга');
+await clickOn(2, 'Нашёл 50');
+st = await (await fetch(`${APP}/api/state`)).json();
+const bookId = st.contests.find((c) => c.kind === 'books').id;
+ok('пустая книга плюс находка', st.scores.t2[bookId] === 60, String(st.scores.t2[bookId]));
+
+await pickContest('Блиц');
+await clickOn(3, '+10');
+await clickOn(3, '+10');
+st = await (await fetch(`${APP}/api/state`)).json();
+const blitzId = st.contests.find((c) => c.kind === 'blitz').id;
+ok('блиц считает правильные ответы', st.scores.t3[blitzId] === 20, String(st.scores.t3[blitzId]));
+
+await clickOn(3, 'Сброс');
+st = await (await fetch(`${APP}/api/state`)).json();
+ok('сброс убирает баллы', st.scores.t3[blitzId] === null, String(st.scores.t3[blitzId]));
+
+// 8. предсказания: случайное вытягивание и учёт использованных
 await evaluate(`document.querySelector('[data-tab="prophecy"]').click()`);
 await sleep(300);
 const listed = await evaluate(`document.querySelector('#prophecy-list').value.split('\\n').filter(Boolean).length`);
@@ -348,7 +402,6 @@ ok('предсказание вытянулось и попало на экра�
   st.display.mode === 'prophecy' && !!drawn.text && drawn.who === 'Ирина',
   drawn.text ? `«${drawn.text.slice(0, 40)}…»` : 'пусто');
 ok('вытянутое записано как использованное', st.prophecies.used.includes(drawn.text));
-ok('предсказание ушло в озвучку', (st.display.speech?.runId || 0) > 0 && st.display.speech.text === drawn.text);
 
 // второй раз выпадет другое: уже показанные не повторяются
 await evaluate(`document.querySelector('#prophecy-draw').click()`);
@@ -373,53 +426,7 @@ st = await (await fetch(`${APP}/api/state`)).json();
 ok('свой список предсказаний сохраняется',
   st.prophecies.list.length === 2 && st.prophecies.list[0] === 'Первое своё');
 
-// 9. голос: кнопка в эфире читает название и описание задания
-await evaluate(`document.querySelector('[data-tab="show"]').click()`);
-await sleep(300);
-st = await (await fetch(`${APP}/api/state`)).json();
-const taskContest = st.contests[0];
-taskContest.description = 'Найдите спрятанный предмет в тёмной комнате.';
-st.display.mode = 'task';
-st.display.contestId = taskContest.id;
-await fetch(`${APP}/api/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(st) });
-await sleep(600);
-const hint = await evaluate(`document.querySelector('#voice-now').textContent`);
-ok('пульт показывает, что прочитает голос', /Найдите спрятанный предмет/.test(String(hint)), String(hint));
-
-await evaluate(`document.querySelector('#speak-task').click()`);
-await sleep(1800);
-st = await (await fetch(`${APP}/api/state`)).json();
-ok('кнопка «Озвучить задание» отправляет текст на экран',
-  /Найдите спрятанный предмет/.test(st.display.speech?.text || ''), st.display.speech?.text || 'пусто');
-const engine = await (await fetch(`${APP}/api/voice`)).json();
-ok('к тексту приложен готовый звук', engine.engine ? /^\/voice\/.+\.wav$/.test(st.display.speech.url || '') : true,
-  engine.engine ? String(st.display.speech.url) : 'синтезатора нет — читает браузер');
-
-// характер голоса доезжает до экрана
-await evaluate(`(() => {
-  document.querySelector('[data-tab="settings"]').click();
-  const sel = document.querySelector('#voice-style');
-  sel.value = 'demon';
-  sel.dispatchEvent(new Event('change')); return 'ok';
-})()`);
-await sleep(600);
-st = await (await fetch(`${APP}/api/state`)).json();
-ok('характер голоса сохраняется', st.display.sound.voice.style === 'demon', String(st.display.sound.voice.style));
-await evaluate(`(() => {
-  const sel = document.querySelector('#voice-style');
-  sel.value = 'anon';
-  sel.dispatchEvent(new Event('change')); return 'ok';
-})()`);
-await sleep(500);
-await evaluate(`document.querySelector('[data-tab="show"]').click()`);
-await sleep(300);
-
-await evaluate(`document.querySelector('#speak-stop').click()`);
-await sleep(500);
-st = await (await fetch(`${APP}/api/state`)).json();
-ok('«Замолчать» снимает текст', st.display.speech.text === '' && st.display.speech.url === '');
-
-// 10. за весь прогон страница не выбросила ошибок
+// 9. за весь прогон страница не выбросила ошибок
 ok('страница без ошибок', pageErrors.length === 0, pageErrors.join(' | '));
 
 console.log(checks.join('\n'));
@@ -427,5 +434,7 @@ ws.close();
 chrome.kill();
 server.kill();
 // сервер мог записать файл уже после kill — не роняем тест из-за уборки
-try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
+for (const dir of [dataDir, profileDir]) {
+  try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 }); } catch { /* останется в /tmp */ }
+}
 process.exit(checks.some((c) => c.startsWith('FAIL')) ? 1 : 0);

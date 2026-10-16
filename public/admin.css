@@ -206,3 +206,30 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 }
 .area:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .voice-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.4rem; }
+
+/* карточки начисления баллов */
+.score-cards { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.8rem 0 1.4rem; max-width: 62rem; }
+.score-group-title {
+  margin-top: 0.8rem; color: var(--dim); font-size: 0.8rem;
+  letter-spacing: 0.18em; text-transform: uppercase;
+}
+.score-card {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  background: var(--card-2); border: 1px solid var(--line);
+  border-radius: 0.5rem; padding: 0.45rem 0.7rem;
+}
+.score-name { min-width: 11rem; font-weight: 500; }
+.score-controls { display: flex; gap: 0.35rem; flex-wrap: wrap; flex: 1 1 auto; }
+.score-count { align-self: center; color: var(--dim); font-size: 0.85rem; }
+.score-free { width: 6rem; }
+.btn.chip { padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+.btn.chip.chip-bad.is-active { background: #5c1f21; border-color: #8c2f32; color: #ffd9d9; }
+.score-sum {
+  min-width: 3.5rem; text-align: right; font-size: 1.15rem;
+  font-variant-numeric: tabular-nums; color: var(--accent);
+}
+.score-sum.is-bad, td.is-bad { color: #ff9a9a; }
+.score-cell { font-variant-numeric: tabular-nums; }
+.kind-select { max-width: 11rem; }
+.draw-result { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.6rem; }
+.draw-line { color: var(--text); font-size: 0.95rem; }

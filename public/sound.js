@@ -122,7 +122,6 @@ window.MMSound = (() => {
       els: [make(), make()],
       active: 0,
       want: 0, // к какой громкости идём сейчас
-      duck: 1, // 1 — обычно, меньше — пока говорит голос
       gain: 0, // текущая громкость
       timer: 0,
       src: null, // что играет
@@ -199,9 +198,8 @@ window.MMSound = (() => {
       }
     }
 
-    const duck = m.duck ?? 1; // во время речи музыку приглушаем
-    cur.volume = m.gain * duck * mix;
-    other.volume = m.gain * duck * (1 - mix);
+    cur.volume = m.gain * mix;
+    other.volume = m.gain * (1 - mix);
 
     // старый проигрыватель доиграл — меняем их местами
     if (cur.ended || (Number.isFinite(dur) && cur.currentTime >= dur - 0.05)) {
@@ -210,153 +208,6 @@ window.MMSound = (() => {
       cur.volume = 0;
       m.active = 1 - m.active;
     }
-  }
-
-  // --- голос ---
-  // Обычный синтезированный wav прогоняем через цепочку: ниже тон, кольцевая
-  // модуляция, лёгкая грязь и короткий металлический хвост. Получается тот самый
-  // искажённый голос «анонимуса».
-  let voiceNodes = null;
-
-  function distortionCurve(amount) {
-    const n = 1024;
-    const curve = new Float32Array(n);
-    for (let i = 0; i < n; i += 1) {
-      const x = (i * 2) / n - 1;
-      curve[i] = ((1 + amount) * x) / (1 + amount * Math.abs(x));
-    }
-    return curve;
-  }
-
-  function impulse(seconds, decay) {
-    const len = Math.floor(ctx.sampleRate * seconds);
-    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let ch = 0; ch < 2; ch += 1) {
-      const data = buf.getChannelData(ch);
-      for (let i = 0; i < len; i += 1) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / len) ** decay;
-      }
-    }
-    return buf;
-  }
-
-  function duck(on) {
-    if (music) music.duck = on ? 0.25 : 1;
-  }
-
-  function stopVoice() {
-    if (!voiceNodes) return;
-    const nodes = [voiceNodes.src, ...(voiceNodes.extra || [])];
-    voiceNodes = null;
-    for (const n of nodes) { try { n.stop(); } catch { /* уже закончил */ } }
-    duck(false);
-  }
-
-  // Характеры голоса: от почти человеческого шёпота до низкого демона.
-  // rate — насколько замедляем запись (вместе с темпом падает и тон),
-  // drive — перегруз, ring/ringHz — дрожание, wet — хвост эха.
-  const VOICE_STYLES = {
-    soft: { rate: 0.92, drive: 3, ring: 0.14, ringHz: 46, double: 0.3, wet: 0.16, hp: 85, lp: 7000, verb: 0.6 },
-    anon: { rate: 0.86, drive: 7, ring: 0.26, ringHz: 54, double: 0.45, wet: 0.24, hp: 95, lp: 5600, verb: 0.75 },
-    demon: { rate: 0.76, drive: 16, ring: 0.44, ringHz: 34, double: 0.55, wet: 0.34, hp: 105, lp: 4400, verb: 1.1 },
-  };
-
-  function voiceStyle(name) {
-    return VOICE_STYLES[name] || VOICE_STYLES.anon;
-  }
-
-  function playVoiceBuffer(buffer, volume, style, onEnd) {
-    const S = voiceStyle(style);
-
-    // Основной голос и его чуть расстроенный двойник: вдвоём звучит объёмнее,
-    // чем одна запись, и слышно «не человека».
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.playbackRate.value = S.rate;
-
-    const dbl = ctx.createBufferSource();
-    dbl.buffer = buffer;
-    dbl.playbackRate.value = S.rate * 0.994;
-    const dblDelay = ctx.createDelay();
-    dblDelay.delayTime.value = 0.019; // 19 мс — утолщает голос, а не раздваивает
-    const dblGain = ctx.createGain();
-    dblGain.gain.value = S.double;
-
-    const mix = ctx.createGain();
-    mix.gain.value = 0.8;
-
-    const shaper = ctx.createWaveShaper();
-    shaper.curve = distortionCurve(S.drive);
-    shaper.oversample = '4x'; // меньше лишней грязи на согласных
-
-    // Амплитудная модуляция: дрожание есть, но слова остаются разборчивыми.
-    const ring = ctx.createGain();
-    ring.gain.value = 1 - S.ring;
-    const lfo = ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = S.ringHz;
-    const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = S.ring;
-    lfo.connect(lfoDepth).connect(ring.gain);
-
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = S.hp;
-
-    // Подъём в районе 2 кГц — именно он отвечает за «слышно каждое слово».
-    const presence = ctx.createBiquadFilter();
-    presence.type = 'peaking';
-    presence.frequency.value = 2100;
-    presence.Q.value = 0.9;
-    presence.gain.value = 5;
-
-    // Гул ниже 200 Гц чуть убираем, иначе низкий голос превращается в кашу.
-    const mud = ctx.createBiquadFilter();
-    mud.type = 'peaking';
-    mud.frequency.value = 260;
-    mud.Q.value = 0.8;
-    mud.gain.value = -3;
-
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = S.lp;
-
-    // Компрессор выравнивает громкость: тихие слова не пропадают под музыку.
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -24;
-    comp.knee.value = 12;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.004;
-    comp.release.value = 0.18;
-
-    const dry = ctx.createGain();
-    dry.gain.value = 1 - S.wet * 0.5;
-    const wet = ctx.createGain();
-    wet.gain.value = S.wet;
-    const verb = ctx.createConvolver();
-    verb.buffer = impulse(S.verb, 3.6);
-
-    const out = ctx.createGain();
-    out.gain.value = Math.max(0, Math.min(1.5, volume)) * 1.15;
-
-    src.connect(mix);
-    dbl.connect(dblDelay).connect(dblGain).connect(mix);
-    mix.connect(shaper).connect(ring).connect(hp).connect(mud).connect(presence).connect(lp).connect(comp);
-    comp.connect(dry).connect(out);
-    comp.connect(verb).connect(wet).connect(out);
-    out.connect(master);
-
-    const t = ctx.currentTime + 0.02;
-    lfo.start(t);
-    src.start(t);
-    dbl.start(t);
-    voiceNodes = { src, extra: [dbl, lfo] };
-    src.onended = () => {
-      if (voiceNodes && voiceNodes.src === src) voiceNodes = null;
-      for (const n of [dbl, lfo]) { try { n.stop(); } catch { /* уже остановлен */ } }
-      duck(false);
-      if (onEnd) onEnd();
-    };
   }
 
   return {
@@ -437,53 +288,6 @@ window.MMSound = (() => {
       }
 
       if (!m.timer) m.timer = setInterval(tickMusic, 40);
-    },
-
-    // Произнести текст. url — готовый wav от сервера (его искажаем),
-    // text — запасной вариант через голос браузера, если синтезатора нет.
-    async speak({ url, text, volume = 1, style = 'anon' }) {
-      if (!settings.on) return false;
-      stopVoice();
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-
-      if (url && ensure() && ctx.state === 'running') {
-        try {
-          const data = await (await fetch(url)).arrayBuffer();
-          const buffer = await ctx.decodeAudioData(data);
-          duck(true);
-          playVoiceBuffer(buffer, volume, style);
-          return true;
-        } catch { /* не вышло — читаем браузерным голосом */ }
-      }
-
-      if (text && window.speechSynthesis) {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = 'ru-RU';
-        const S = voiceStyle(style);
-        u.pitch = Math.max(0, (S.rate - 0.5) * 1.2); // чем ниже темп, тем ниже голос
-        u.rate = S.rate + 0.05;
-        u.volume = Math.max(0, Math.min(1, volume));
-        const ru = speechSynthesis.getVoices().find((v) => /ru/i.test(v.lang));
-        if (ru) u.voice = ru;
-        duck(true);
-        u.onend = () => duck(false);
-        u.onerror = () => duck(false);
-        speechSynthesis.speak(u);
-        return true;
-      }
-      duck(false);
-      return false;
-    },
-
-    // говорит ли зеркало прямо сейчас (нужно автотесту и подсказкам)
-    speaking() {
-      return !!voiceNodes || !!(window.speechSynthesis && window.speechSynthesis.speaking);
-    },
-
-    stopSpeech() {
-      stopVoice();
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      duck(false);
     },
 
     // звук разрешили позже — пробуем доиграть

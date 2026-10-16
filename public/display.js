@@ -9,7 +9,6 @@ let prevRects = new Map(); // FLIP: позиции строк до перери�
 let firstRender = true; // на первой отрисовке звуки не играем
 let prevMode = null;
 let prevTestId = 0;
-let prevSpeechId = null; // что уже прочитано голосом
 let newlyRevealed = 0;
 const unmute = document.getElementById('unmute');
 const PREVIEW = new URLSearchParams(location.search).has('preview'); // окно предпросмотра на пульте — без звука
@@ -71,7 +70,7 @@ function playRects() {
 // пока всё не поместится без обрезки. Работает и для списка, и для портрета —
 // внутри обоих размеры заданы в em, поэтому высота масштабируется линейно.
 function fitBlock() {
-  const wrap = stage.querySelector('.rows, .solo, .grid-groups, .task-card');
+  const wrap = stage.querySelector('.rows, .solo, .task-card, .draw-box');
   if (!wrap) return;
   // Сбрасываем прошлую подгонку, иначе после переезда окна на экран побольше
   // блок так и остался бы ужатым. Базовый кегль берём из CSS самого блока:
@@ -240,7 +239,105 @@ function taskView(contest) {
   return box;
 }
 
-// Предсказание гостю: его же и зачитывает голос зеркала.
+// --- жеребьёвка ---
+// Пульт уже всё разыграл; экран только красиво вскрывает результат:
+// имена мелькают барабаном и по одному встают на места.
+let drawRunId = null;
+let drawTimers = [];
+
+function clearDrawTimers() {
+  for (const t of drawTimers) { clearTimeout(t); clearInterval(t); }
+  drawTimers = [];
+}
+
+function nameOf(pid) {
+  const p = state.participants.find((x) => x.id === pid);
+  return p ? (p.name || 'Без имени') : '—';
+}
+
+function drawTitle(dr) {
+  if (dr.kind === 'order') return 'Очередь';
+  if (dr.kind === 'final') return 'Финал';
+  return 'Жеребьёвка';
+}
+
+function drawView(dr) {
+  const box = el('div', 'draw-box');
+  box.appendChild(el('div', 'task-label', drawTitle(dr)));
+  const slots = [];
+
+  if (dr.kind === 'order') {
+    const list = el('ol', 'draw-order');
+    for (const pid of dr.order || []) {
+      const li = el('li');
+      const n = el('span', 'draw-name', '—');
+      n.dataset.pid = pid;
+      li.appendChild(n);
+      list.appendChild(li);
+      slots.push(n);
+    }
+    if (!slots.length) box.appendChild(el('p', 'empty', 'Жеребьёвка ещё не проведена'));
+    else box.appendChild(list);
+  } else if (dr.kind === 'final') {
+    const wrap = el('div', 'draw-calls');
+    for (const call of dr.calls || []) {
+      const row = el('div', 'draw-call');
+      row.appendChild(el('div', 'draw-call-to', `К ${nameOf(call.finalist)} выходит`));
+      const n = el('div', 'draw-name draw-name-big', '—');
+      n.dataset.pid = call.guest;
+      row.appendChild(n);
+      wrap.appendChild(row);
+      slots.push(n);
+    }
+    if (!slots.length) box.appendChild(el('p', 'empty', 'Зеркало ещё не выбрало'));
+    else box.appendChild(wrap);
+  } else {
+    const grid = el('div', 'draw-groups');
+    (dr.groups || []).forEach((g, gi) => {
+      const card = el('div', 'draw-group');
+      card.appendChild(el('div', 'draw-group-title', `Тройка ${gi + 1}`));
+      for (const pid of g) {
+        const n = el('div', 'draw-name', '—');
+        n.dataset.pid = pid;
+        card.appendChild(n);
+        slots.push(n);
+      }
+      grid.appendChild(card);
+    });
+    if (!slots.length) box.appendChild(el('p', 'empty', 'Жеребьёвка ещё не проведена'));
+    else box.appendChild(grid);
+  }
+
+  box.slots = slots;
+  return box;
+}
+
+function playDraw(slots, animate) {
+  clearDrawTimers();
+  const pool = state.participants.filter((p) => !p.hidden).map((p) => p.name || 'Без имени');
+  if (!animate || !pool.length) {
+    for (const n of slots) {
+      n.textContent = nameOf(n.dataset.pid);
+      n.classList.add('is-locked');
+    }
+    return;
+  }
+  slots.forEach((n, i) => {
+    const spin = setInterval(() => {
+      n.textContent = pool[Math.floor(Math.random() * pool.length)];
+    }, 70);
+    drawTimers.push(spin);
+    drawTimers.push(setTimeout(() => {
+      clearInterval(spin);
+      n.textContent = nameOf(n.dataset.pid);
+      n.classList.add('is-locked');
+      sound(i === slots.length - 1 ? 'strike' : 'tick');
+      fitBlock();
+    }, 700 + i * 420));
+  });
+}
+
+// Предсказание гостю: текст на весь экран.
 function prophecyView(pr) {
   const box = el('div', 'task-card prophecy');
   box.appendChild(el('div', 'task-label', 'Предсказание'));
@@ -255,66 +352,6 @@ function prophecyView(pr) {
   }
   box.appendChild(text);
   return box;
-}
-
-// Сетка тура: группы рядом, в каждой свои участники и баллы за тур.
-// Баллы закрыты, пока ведущий их не откроет, — как и в обычном рейтинге.
-function groupsView(round) {
-  const wrap = el('div', 'grid-groups');
-  if (!round) {
-    wrap.appendChild(el('p', 'empty', 'Тур ещё не сформирован'));
-    return wrap;
-  }
-  wrap.dataset.groups = String(round.groups.length);
-
-  for (const group of round.groups) {
-    const card = el('div', 'gcard');
-    card.appendChild(el('div', 'gname', group.name));
-
-    const rows = MM.groupStanding(state, round, group).map((r) => ({
-      ...r,
-      revealed: MM.isRevealed(state, round.id, r.p.id),
-    }));
-    // нераскрытые уходят вниз в порядке жеребьёвки, чтобы не выдать результат
-    rows.sort((a, b) => {
-      if (a.revealed !== b.revealed) return a.revealed ? -1 : 1;
-      if (a.revealed && b.revealed && a.value !== b.value) return b.value - a.value;
-      return a.i - b.i;
-    });
-
-    for (const row of rows) {
-      const line = el('div', 'gline');
-      line.dataset.id = row.p.id;
-      const goes = round.finished && row.revealed && row.advances;
-      if (goes) line.classList.add('goes');
-      if (!row.revealed) line.classList.add('hidden-score');
-      if (row.p.out) line.classList.add('out');
-
-      line.appendChild(avatar(row.p, 'gpic'));
-
-      const who = el('div', 'gwho');
-      who.appendChild(el('div', 'gnm', row.p.name || 'Без имени'));
-      if (goes) who.appendChild(el('div', 'gbadge', 'проходит дальше'));
-      else if (row.p.note) who.appendChild(el('div', 'gnote', row.p.note));
-      line.appendChild(who);
-
-      const score = el('div', 'gscore');
-      if (row.revealed) {
-        score.textContent = String(row.value);
-        if (!prevReveal[MM.revealKey(round.id, row.p.id)]) {
-          score.classList.add('revealed');
-          newlyRevealed += 1;
-        }
-      } else {
-        score.textContent = '?';
-        score.classList.add('unknown');
-      }
-      line.appendChild(score);
-      card.appendChild(line);
-    }
-    wrap.appendChild(card);
-  }
-  return wrap;
 }
 
 function soloView(p, { winner = false } = {}) {
@@ -396,8 +433,6 @@ function render() {
     banner.hidden = true;
   }
 
-  if (!PREVIEW) applySpeech(d);
-
   captureRects();
   stage.innerHTML = '';
 
@@ -411,12 +446,18 @@ function render() {
     stage.appendChild(rowsView(null));
   } else if (d.mode === 'task') {
     stage.appendChild(taskView(state.contests.find((c) => c.id === d.contestId)));
+  } else if (d.mode === 'draw') {
+    const dr = state.draw || {};
+    const box = drawView(dr);
+    stage.appendChild(box);
+    // Барабан крутим на каждую новую жеребьёвку. Если окно зеркала открыли
+    // посреди розыгрыша, оно тоже прокрутит — так ведущему проще переоткрыть экран.
+    const id = dr.runId || 0;
+    const animate = !PREVIEW && id > 0 && id !== drawRunId;
+    drawRunId = id;
+    playDraw(box.slots, animate);
   } else if (d.mode === 'prophecy') {
     stage.appendChild(prophecyView(d.prophecy || {}));
-  } else if (d.mode === 'groups') {
-    const round = MM.currentRound(state);
-    stage.appendChild(el('h2', 'stage-title', round ? round.name : 'Турнир'));
-    stage.appendChild(groupsView(round));
   } else if (d.mode === 'contest') {
     const c = state.contests.find((x) => x.id === d.contestId) || state.contests[0];
     stage.appendChild(el('h2', 'stage-title', c ? c.name : 'Конкурс'));
@@ -482,19 +523,6 @@ const trackUrl = (file) => `music/tasks/${file.split('/').map(encodeURIComponent
 //   задание и итоги — трек этого конкурса (или «без музыки», если так выбрали);
 //   остальные       — трек текущего конкурса, иначе первый файл из папки,
 //                     а если музыки заданий нет совсем — заставка.
-// Голос зеркала: пульт меняет runId — значит просит прочитать заново.
-function applySpeech(d) {
-  const sp = d.speech || {};
-  const id = sp.runId || 0;
-  if (prevSpeechId === null) { prevSpeechId = id; return; } // не читаем то, что было до открытия окна
-  if (id === prevSpeechId) return;
-  prevSpeechId = id;
-  const voice = (d.sound && d.sound.voice) || {};
-  if (voice.on === false) return;
-  if (!sp.text && !sp.url) { MMSound.stopSpeech(); return; }
-  MMSound.speak({ url: sp.url, text: sp.text, volume: voice.volume ?? 1, style: voice.style || 'anon' });
-}
-
 function musicPlan(d) {
   const waiting = (d.sound && d.sound.music) || {};
   const task = (d.sound && d.sound.taskMusic) || {};

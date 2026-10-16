@@ -13,7 +13,6 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import crypto from 'node:crypto';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -73,31 +72,37 @@ const DEFAULT_PROPHECIES = [
 function defaultShow() {
   return {
     settings: { title: 'Битва сильнейших', subtitle: 'Волшебное зеркало' },
+    // Порядок конкурсов — порядок вечера. Тип конкурса решает,
+    // как пульт начисляет баллы (см. KINDS в public/shared.js).
     contests: [
-      { id: id('c'), name: 'Испытание 1' },
-      { id: id('c'), name: 'Испытание 2' },
-      { id: id('c'), name: 'Испытание 3' },
+      { id: id('c'), name: 'Чёрный ящик', kind: 'blackbox', description: 'Что лежит в ящике? Живое или неживое, цвет, количество и что это.' },
+      { id: id('c'), name: 'Русская рулетка', kind: 'roulette', description: 'Пять пистолетов. Заряжен только один.' },
+      { id: id('c'), name: 'Книжный червь', kind: 'books', description: 'Десять книг. В одной из них деньги.' },
+      { id: id('c'), name: 'Стаканы', kind: 'glasses', description: 'Пять стаканов: два отравленных, один победный, два обычных.' },
+      { id: id('c'), name: 'Блиц: кто есть кто', kind: 'blitz', description: 'Вопросы об участниках. Отвечает тот, кто первый.' },
+      { id: id('c'), name: 'Финал вслепую', kind: 'final', description: 'Финалисты с завязанными глазами угадывают, кто перед ними.' },
     ],
     participants: [],
     scores: {}, // scores[participantId][contestId] = число или null
-    // Предсказания гостям: зачитываются голосом в конце игры
-    prophecies: { list: [...DEFAULT_PROPHECIES], used: [] },
-    // Турнир: участники сражаются группами, из каждой группы проходят лучшие.
-    // Конкурсы тура помечены roundId, вне турнира это поле пустое.
-    tournament: {
-      on: false,
-      groupSize: 3, // по сколько человек в группе
-      advance: 2, // сколько проходит дальше из каждой группы
-      rounds: [], // [{ id, name, groups: [{id, name, members: [pid]}], advancing: [pid], finished }]
-      currentRoundId: null,
+    marks: {}, // marks[participantId][contestId] = отметки, из них считается балл
+    // Жеребьёвка: тройки, очередь и финальный вызов
+    draw: {
+      runId: 0,
+      kind: 'groups', // groups | order | final
+      contestId: null,
+      groups: [], // [[pid, pid, pid], ...]
+      order: [], // [pid, ...]
+      finalists: [], // два имени, которых рандомайзер не вызывает
+      calls: [], // [{ finalist: pid, guest: pid }]
     },
+    prophecies: { list: [...DEFAULT_PROPHECIES], used: [] },
   };
 }
 
 // Состояние эфира — что прямо сейчас на телевизоре. В библиотеке не хранится.
 function defaultDisplay() {
   return {
-    mode: 'standby', // standby | leaderboard | contest | spotlight | winner
+    mode: 'standby', // standby | task | draw | leaderboard | contest | spotlight | winner | prophecy
     contestId: null,
     spotlightId: null,
     reveal: {}, // ключ 'total:<pid>' или '<contestId>:<pid>' -> true
@@ -111,11 +116,7 @@ function defaultDisplay() {
       music: { on: true, volume: 0.6 },
       // музыка заданий: файлы из public/music/tasks, раздаются конкурсам по очереди
       taskMusic: { on: true, volume: 0.5, scan: 0 },
-      // голос зеркала: читает задания и предсказания
-      voice: { on: true, volume: 1, name: '', style: 'anon' },
     },
-    // что зачитать голосом: пульт присылает текст и увеличивает runId
-    speech: { runId: 0, text: '', url: '' },
     // предсказание на экране
     prophecy: { text: '', who: '' },
     // режим «объявление результата»: баллы накручиваются от нуля
@@ -188,7 +189,8 @@ export async function startServer({ dataDir, port, host } = {}) {
       contests: state.contests,
       participants: state.participants,
       scores: state.scores,
-      tournament: state.tournament,
+      marks: state.marks,
+      draw: state.draw,
       prophecies: state.prophecies,
     };
   }
@@ -240,7 +242,8 @@ export async function startServer({ dataDir, port, host } = {}) {
       ...base,
       ...parsed.show,
       // шоу, сохранённые до появления турнира, не знают про это поле
-      tournament: { ...base.tournament, ...(parsed.show.tournament || {}) },
+      marks: parsed.show.marks || {},
+      draw: { ...base.draw, ...(parsed.show.draw || {}) },
       prophecies: { ...base.prophecies, ...(parsed.show.prophecies || {}) },
       display: { ...defaultDisplay(), sound },
     };
@@ -256,10 +259,9 @@ export async function startServer({ dataDir, port, host } = {}) {
       state.display.sound = { ...base.display.sound, ...(parsed.display?.sound || {}) };
       state.display.sound.music = { ...base.display.sound.music, ...(parsed.display?.sound?.music || {}) };
       state.display.sound.taskMusic = { ...base.display.sound.taskMusic, ...(parsed.display?.sound?.taskMusic || {}) };
-      state.display.sound.voice = { ...base.display.sound.voice, ...(parsed.display?.sound?.voice || {}) };
-      state.display.speech = { ...base.display.speech, ...(parsed.display?.speech || {}) };
       state.display.prophecy = { ...base.display.prophecy, ...(parsed.display?.prophecy || {}) };
-      state.tournament = { ...base.tournament, ...(parsed.tournament || {}) };
+      state.marks = parsed.marks || {};
+      state.draw = { ...base.draw, ...(parsed.draw || {}) };
       state.prophecies = { ...base.prophecies, ...(parsed.prophecies || {}) };
       console.log('Состояние загружено');
     } catch {
@@ -358,130 +360,6 @@ export async function startServer({ dataDir, port, host } = {}) {
       res.end('Не найдено');
     }
   }
-
-  // --- голос ---
-  // Синтезатор берём системный: на Mac это say, на Windows PowerShell,
-  // на Linux espeak-ng. Готовый wav кладём в data/voice и переиспользуем:
-  // один и тот же текст не синтезируем дважды.
-  const VOICE_DIR = path.join(DATA_DIR, 'voice');
-  let voiceEngine = null; // { id, bin, voices: [] }
-
-  function canRun(bin, args) {
-    return new Promise((resolve) => {
-      const child = spawn(bin, args, { stdio: 'ignore' });
-      child.on('error', () => resolve(false));
-      child.on('close', (code) => resolve(code === 0 || code === 1));
-    });
-  }
-
-  async function detectVoice() {
-    await fsp.mkdir(VOICE_DIR, { recursive: true });
-
-    if (process.platform === 'darwin' && await canRun('say', ['-v', '?'])) {
-      const list = await new Promise((resolve) => {
-        let out = '';
-        const child = spawn('say', ['-v', '?']);
-        child.stdout.on('data', (c) => { out += c; });
-        child.on('error', () => resolve(''));
-        child.on('close', () => resolve(out));
-      });
-      // строки вида: Milena              ru_RU    # Здравствуйте, меня зовут Milena.
-      const voices = list.split('\n')
-        .map((line) => /^(\S[^#]*?)\s{2,}([a-z]{2}_[A-Z]{2})/.exec(line))
-        .filter(Boolean)
-        .map((m) => ({ id: m[1].trim(), name: m[1].trim(), lang: m[2] }));
-      const ru = voices.filter((v) => v.lang.startsWith('ru'));
-      // Голос зеркала мужской, поэтому из русских выбираем мужской и,
-      // если система его скачала, улучшенный вариант (Enhanced/Premium).
-      const score = (v) => (/(yuri|юрий|mikhail|михаил|aleksandr|александр)/i.test(v.name) ? 8 : 0)
-        + (/premium/i.test(v.name) ? 3 : 0)
-        + (/enhanced/i.test(v.name) ? 2 : 0);
-      const ranked = [...ru].sort((a, b) => score(b) - score(a));
-      // по умолчанию берём русский голос, иначе система прочтёт русский текст по-английски
-      voiceEngine = {
-        id: 'say',
-        voices: ranked.length ? ranked : voices,
-        ru: ranked.length > 0,
-        def: ranked.length ? ranked[0].id : '',
-        male: ranked.length ? score(ranked[0]) >= 8 : false,
-      };
-      return;
-    }
-
-    if (process.platform === 'win32') {
-      voiceEngine = { id: 'powershell', voices: [], ru: true };
-      return;
-    }
-
-    for (const bin of ['espeak-ng', 'espeak']) {
-      if (await canRun(bin, ['--version'])) {
-        voiceEngine = { id: 'espeak', bin, voices: [{ id: 'ru', name: 'Russian', lang: 'ru' }], ru: true };
-        return;
-      }
-    }
-    voiceEngine = null;
-  }
-
-  // Экран замедляет запись, чтобы понизить тон, — значит синтезатор должен
-  // прочитать текст быстрее, иначе голос выйдет сонным. Числа те же, что
-  // в public/sound.js у характеров голоса.
-  const STYLE_RATE = { soft: 0.92, anon: 0.86, demon: 0.76 };
-
-  // Синтез в wav. Текст передаём файлом: так не страдают кавычки и длина.
-  async function synthesize(text, voice, style) {
-    if (!voiceEngine) throw new Error('В системе нет синтезатора речи');
-    const pick = voice || voiceEngine.def || '';
-    const rate = STYLE_RATE[style] || STYLE_RATE.anon;
-    const key = crypto.createHash('sha1')
-      .update(`${voiceEngine.id}|${pick}|${rate}|${text}`)
-      .digest('hex')
-      .slice(0, 16);
-    const file = path.join(VOICE_DIR, `${key}.wav`);
-    try {
-      await fsp.access(file);
-      return `/voice/${key}.wav`; // уже синтезировали раньше
-    } catch { /* синтезируем */ }
-
-    const txt = path.join(VOICE_DIR, `${key}.txt`);
-    await fsp.writeFile(txt, text, 'utf8');
-
-    const run = (bin, args) => new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { stdio: 'ignore' });
-      child.on('error', reject);
-      child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${bin} вернул ${code}`))));
-    });
-
-    if (voiceEngine.id === 'say') {
-      // 44 кГц вместо 22: после замедления и фильтров разница слышна
-      const args = ['-o', file, '--file-format=WAVE', '--data-format=LEI16@44100',
-        '-r', String(Math.round(168 / rate))];
-      if (pick) args.push('-v', pick);
-      args.push('-f', txt);
-      try {
-        await run('say', args);
-      } catch {
-        // система не приняла имя голоса — читаем голосом по умолчанию
-        await run('say', ['-o', file, '--file-format=WAVE', '--data-format=LEI16@44100',
-          '-r', String(Math.round(168 / rate)), '-f', txt]);
-      }
-    } else if (voiceEngine.id === 'espeak') {
-      await run(voiceEngine.bin, ['-v', pick || 'ru', '-s', String(Math.round(158 / rate)),
-        '-p', '30', '-a', '180', '-w', file, '-f', txt]);
-    } else if (voiceEngine.id === 'powershell') {
-      const ps = `$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Speech;`
-        + `$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;`
-        + (pick ? `$s.SelectVoice('${pick.replace(/'/g, "''")}');` : '')
-        + `$s.SetOutputToWaveFile('${file.replace(/'/g, "''")}');`
-        + `$s.Speak([IO.File]::ReadAllText('${txt.replace(/'/g, "''")}',[Text.Encoding]::UTF8));$s.Dispose();`;
-      await run('powershell', ['-NoProfile', '-Command', ps]);
-    }
-
-    await fsp.unlink(txt).catch(() => {});
-    await fsp.access(file); // синтезатор мог промолчать
-    return `/voice/${key}.wav`;
-  }
-
-  await detectVoice();
 
   // Ищем звуковые файлы в папке и во вложенных папках (не глубже двух уровней)
   const AUDIO_RE = /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i;
@@ -637,36 +515,6 @@ export async function startServer({ dataDir, port, host } = {}) {
     // Заготовленные предсказания: пульт умеет вернуть список к ним
     if (pathname === '/api/prophecies/default' && req.method === 'GET') {
       return sendJson(res, 200, { ok: true, list: DEFAULT_PROPHECIES });
-    }
-
-    // Какой синтезатор есть и какие у него голоса
-    if (pathname === '/api/voice' && req.method === 'GET') {
-      return sendJson(res, 200, {
-        ok: true,
-        engine: voiceEngine ? voiceEngine.id : null,
-        ru: !!(voiceEngine && voiceEngine.ru),
-        male: !!(voiceEngine && voiceEngine.male),
-        voices: voiceEngine ? voiceEngine.voices : [],
-      });
-    }
-
-    // Озвучить текст: вернём адрес готового wav
-    if (pathname === '/api/voice' && req.method === 'POST') {
-      try {
-        const { text, voice, style } = JSON.parse(await readBody(req) || '{}');
-        const clean = String(text || '').trim().slice(0, 2000);
-        if (!clean) throw new Error('Нечего озвучивать');
-        const url = await synthesize(clean, voice, style);
-        return sendJson(res, 200, { ok: true, url });
-      } catch (e) {
-        return sendJson(res, 400, { ok: false, error: String(e.message || e) });
-      }
-    }
-
-    if (pathname.startsWith('/voice/')) {
-      const target = safeJoin(VOICE_DIR, pathname.slice('/voice'.length));
-      if (!target) return sendJson(res, 400, { ok: false });
-      return serveFile(res, target, req.headers.range);
     }
 
     // Список музыки для заданий: что лежит в public/music/tasks.

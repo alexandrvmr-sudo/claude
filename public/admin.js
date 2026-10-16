@@ -3,6 +3,7 @@
 
 let state = null;
 let myRev = -1; // чтобы не перерисовывать пульт от собственного эха
+let pending = 0; // сколько наших отправок ещё в пути
 
 const $ = (sel) => document.querySelector(sel);
 const conn = $('#conn');
@@ -18,6 +19,7 @@ const uid = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36)
 
 async function push() {
   render();
+  pending += 1;
   try {
     const res = await fetch('/api/state', {
       method: 'POST',
@@ -25,10 +27,12 @@ async function push() {
       body: JSON.stringify(state),
     });
     const data = await res.json();
-    if (data.rev) myRev = data.rev;
+    if (data.rev) myRev = Math.max(myRev, data.rev);
   } catch {
     conn.textContent = 'нет связи с сервером';
     conn.className = 'conn bad';
+  } finally {
+    pending -= 1;
   }
 }
 
@@ -57,18 +61,18 @@ addEventListener('resize', fitPreview);
 const MODES = [
   { id: 'standby', label: 'Ожидание' },
   { id: 'task', label: 'Задание' },
-  { id: 'groups', label: 'Сетка тура', tournamentOnly: true },
   { id: 'leaderboard', label: 'Общий рейтинг' },
   { id: 'contest', label: 'Итоги конкурса' },
   { id: 'spotlight', label: 'Один участник' },
   { id: 'winner', label: 'Победитель' },
+  { id: 'draw', label: 'Жеребьёвка' },
   { id: 'prophecy', label: 'Предсказание' },
 ];
 
 function renderModes() {
   const host = $('#modes');
   host.innerHTML = '';
-  for (const m of MODES.filter((m) => !m.tournamentOnly || MM.isTournament(state))) {
+  for (const m of MODES) {
     const b = el('button', 'btn', m.label);
     if (state.display.mode === m.id) b.classList.add('is-active', 'btn-gold');
     b.addEventListener('click', () => {
@@ -118,8 +122,7 @@ function renderModes() {
 
   const cs = $('#mode-contest');
   cs.innerHTML = '';
-  const round = MM.isTournament(state) ? currentRound() : null;
-  for (const c of (round ? MM.roundContests(state, round.id) : state.contests)) {
+  for (const c of state.contests) {
     const o = el('option', null, c.name);
     o.value = c.id;
     if (c.id === state.display.contestId) o.selected = true;
@@ -208,15 +211,6 @@ $('#show-places').addEventListener('change', (e) => { state.display.showPlaces =
 // В каком контексте открываем: конкурс (режим «Конкурс») или сумму (все остальные режимы).
 function revealContext() {
   const live = () => state.participants.filter((p) => !p.hidden);
-  if (state.display.mode === 'groups') {
-    const r = currentRound();
-    return {
-      contestId: r ? r.id : null,
-      label: r ? `баллы за тур «${r.name}»` : 'тур не сформирован',
-      people: r ? MM.roundMembers(state, r) : [],
-      value: (pid) => (r ? MM.roundScore(state, pid, r.id) : null),
-    };
-  }
   if (state.display.mode === 'contest') {
     const c = state.contests.find((x) => x.id === state.display.contestId);
     return {
@@ -468,10 +462,17 @@ function renderContests() {
     input.addEventListener('change', () => { c.name = input.value.trim(); push(); });
     row.appendChild(input);
 
-    if (c.roundId) {
-      const round = MM.tour(state).rounds.find((r) => r.id === c.roundId);
-      row.appendChild(el('div', 'meta', round ? round.name : 'тур'));
+    // тип конкурса решает, как пульт начисляет баллы
+    const kindSel = el('select', 'kind-select');
+    for (const [id, kind] of Object.entries(MM.KINDS)) {
+      const o = el('option', null, kind.label);
+      o.value = id;
+      if (id === MM.kindOf(c)) o.selected = true;
+      kindSel.appendChild(o);
     }
+    kindSel.addEventListener('change', () => { c.kind = kindSel.value; push(); });
+    row.appendChild(kindSel);
+
     row.appendChild(musicSelect(c));
 
     const show = el('button', 'btn small btn-gold', 'Задание на экран');
@@ -497,6 +498,7 @@ function renderContests() {
       if (!confirm(`Удалить конкурс «${c.name}» вместе с баллами?`)) return;
       state.contests = state.contests.filter((x) => x.id !== c.id);
       for (const pid of Object.keys(state.scores)) delete state.scores[pid][c.id];
+      for (const pid of Object.keys(state.marks || {})) delete state.marks[pid][c.id];
       for (const key of Object.keys(state.display.reveal)) {
         if (key.startsWith(`${c.id}:`)) delete state.display.reveal[key];
       }
@@ -526,64 +528,213 @@ function renderContests() {
 }
 
 // --- таблица баллов ---
+// --- баллы ---
+// У каждого конкурса своя форма начисления: галочки чёрного ящика,
+// выбор стакана, счётчик блица. Пульт считает сумму и кладёт её в scores.
+
+function markOf(pid, contestId) {
+  state.marks = state.marks || {};
+  state.marks[pid] = state.marks[pid] || {};
+  state.marks[pid][contestId] = state.marks[pid][contestId] || {};
+  return state.marks[pid][contestId];
+}
+
+function applyMarks(pid, contestId, kindId) {
+  const value = MM.scoreFromMarks(kindId, (state.marks[pid] || {})[contestId]);
+  state.scores[pid] = state.scores[pid] || {};
+  state.scores[pid][contestId] = value;
+  push();
+}
+
+function clearMarks(pid, contestId) {
+  if (state.marks && state.marks[pid]) delete state.marks[pid][contestId];
+  if (state.scores[pid]) state.scores[pid][contestId] = null;
+  push();
+}
+
+function scoreContest() {
+  const sel = $('#score-contest');
+  return state.contests.find((c) => c.id === sel.value) || state.contests[0] || null;
+}
+
+function kindHint(kindId) {
+  const kind = MM.KINDS[kindId];
+  if (!kind) return '';
+  const parts = [];
+  for (const ch of kind.choices || []) parts.push(`${ch.label} ${ch.points > 0 ? '+' : ''}${ch.points}`);
+  for (const m of kind.marks || []) parts.push(`${m.label} +${m.points}`);
+  if (kind.counter) parts.push(`каждый правильный ответ +${kind.counter.step}`);
+  return parts.length ? `${kind.label}: ${parts.join(' · ')}` : kind.hint || kind.label;
+}
+
+function scoreCard(p, contest, kindId) {
+  const kind = MM.KINDS[kindId];
+  const mark = MM.marksOf(state, p.id, contest.id) || {};
+  const card = el('div', 'score-card');
+  card.appendChild(el('div', 'score-name', p.name || 'Без имени'));
+
+  const controls = el('div', 'score-controls');
+
+  if (kindId === 'free') {
+    const input = el('input', 'score-free');
+    input.type = 'number';
+    input.step = 'any';
+    input.value = MM.score(state, p.id, contest.id) ?? '';
+    input.addEventListener('input', () => {
+      state.scores[p.id] = state.scores[p.id] || {};
+      const raw = input.value.trim();
+      state.scores[p.id][contest.id] = raw === '' ? null : Number(raw);
+      pushQuiet();
+    });
+    controls.appendChild(input);
+  }
+
+  for (const ch of kind.choices || []) {
+    const b = el('button', 'btn chip', `${ch.label} ${ch.points > 0 ? '+' : ''}${ch.points}`);
+    if (mark.choice === ch.id) b.classList.add('is-active', 'btn-gold');
+    if (ch.points < 0) b.classList.add('chip-bad');
+    b.addEventListener('click', () => {
+      const m = markOf(p.id, contest.id);
+      m.choice = m.choice === ch.id ? null : ch.id;
+      delete m.zero;
+      applyMarks(p.id, contest.id, kindId);
+    });
+    controls.appendChild(b);
+  }
+
+  for (const mk of kind.marks || []) {
+    const b = el('button', 'btn chip', `${mk.label} +${mk.points}`);
+    if (mark[mk.id]) b.classList.add('is-active', 'btn-gold');
+    b.addEventListener('click', () => {
+      const m = markOf(p.id, contest.id);
+      m[mk.id] = !m[mk.id];
+      delete m.zero;
+      applyMarks(p.id, contest.id, kindId);
+    });
+    controls.appendChild(b);
+  }
+
+  if (kind.counter) {
+    const minus = el('button', 'btn chip', '−');
+    const plus = el('button', 'btn chip btn-gold', `+${kind.counter.step}`);
+    const count = el('span', 'score-count', `${mark.count || 0} ${kind.counter.label}`);
+    minus.addEventListener('click', () => {
+      const m = markOf(p.id, contest.id);
+      m.count = Math.max(0, (m.count || 0) - 1);
+      applyMarks(p.id, contest.id, kindId);
+    });
+    plus.addEventListener('click', () => {
+      const m = markOf(p.id, contest.id);
+      m.count = (m.count || 0) + 1;
+      applyMarks(p.id, contest.id, kindId);
+    });
+    controls.append(minus, count, plus);
+  }
+
+  if (kindId !== 'free') {
+    const zero = el('button', 'btn chip', 'Ничего');
+    if (mark.zero) zero.classList.add('is-active');
+    zero.addEventListener('click', () => {
+      state.marks[p.id] = state.marks[p.id] || {};
+      state.marks[p.id][contest.id] = { zero: true };
+      applyMarks(p.id, contest.id, kindId);
+    });
+    controls.appendChild(zero);
+  }
+
+  const clear = el('button', 'btn chip', 'Сброс');
+  clear.addEventListener('click', () => clearMarks(p.id, contest.id));
+  controls.appendChild(clear);
+
+  card.appendChild(controls);
+
+  const value = MM.score(state, p.id, contest.id);
+  const sum = el('div', 'score-sum', value === null ? '—' : String(value));
+  if (value !== null && value < 0) sum.classList.add('is-bad');
+  card.appendChild(sum);
+  return card;
+}
+
+function renderScoreCards() {
+  const sel = $('#score-contest');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  for (const c of state.contests) {
+    const o = el('option', null, c.name || 'Без названия');
+    o.value = c.id;
+    sel.appendChild(o);
+  }
+  if (prev && state.contests.some((c) => c.id === prev)) sel.value = prev;
+
+  const host = $('#score-cards');
+  host.innerHTML = '';
+  const contest = scoreContest();
+  if (!contest) {
+    $('#score-kind').textContent = 'Сначала добавьте конкурс.';
+    return;
+  }
+  const kindId = MM.kindOf(contest);
+  $('#score-kind').textContent = kindHint(kindId);
+
+  if (!state.participants.length) {
+    host.appendChild(el('p', 'hint', 'Сначала добавьте участников.'));
+    return;
+  }
+
+  // если для этого конкурса была жеребьёвка — раскладываем по тройкам
+  const dr = state.draw || {};
+  const blocks = (dr.kind === 'groups' && dr.contestId === contest.id && (dr.groups || []).length)
+    ? dr.groups.map((g, i) => ({ title: `Тройка ${i + 1}`, ids: g }))
+    : [{ title: '', ids: state.participants.map((p) => p.id) }];
+
+  for (const block of blocks) {
+    if (block.title) host.appendChild(el('div', 'score-group-title', block.title));
+    for (const pid of block.ids) {
+      const p = state.participants.find((x) => x.id === pid);
+      if (p) host.appendChild(scoreCard(p, contest, kindId));
+    }
+  }
+}
+
+// Общий зачёт: таблица только для чтения, правки идут карточками выше.
 function renderScores() {
+  renderScoreCards();
   const table = $('#score-table');
   table.innerHTML = '';
 
-  // В турнире показываем только текущий тур: его конкурсы и его участников.
-  const round = MM.isTournament(state) ? currentRound() : null;
-  const contests = round ? MM.roundContests(state, round.id) : state.contests.filter((c) => !c.roundId);
-  const people = round ? MM.roundMembers(state, round) : state.participants;
-  const note = $('#scores-note');
-  if (note) {
-    note.textContent = round
-      ? `Идёт «${round.name}»: в таблице только его конкурсы и участники.`
-      : '';
-    note.hidden = !round;
-  }
-
   const head = table.insertRow();
   head.appendChild(el('th', null, 'Участник'));
-  for (const c of contests) head.appendChild(el('th', null, c.name));
-  head.appendChild(el('th', null, round ? 'За тур' : 'Сумма'));
+  for (const c of state.contests) head.appendChild(el('th', null, c.name));
+  head.appendChild(el('th', null, 'Сумма'));
 
-  for (const p of people) {
+  for (const p of state.participants) {
     const tr = table.insertRow();
-    const who = el('td', 'who', p.name || 'Без имени');
-    tr.appendChild(who);
-    for (const c of contests) {
-      const td = el('td');
-      const input = el('input');
-      input.type = 'number';
-      input.step = 'any';
-      input.value = MM.score(state, p.id, c.id) ?? '';
-      input.addEventListener('input', () => {
-        state.scores[p.id] = state.scores[p.id] || {};
-        const raw = input.value.trim();
-        state.scores[p.id][c.id] = raw === '' ? null : Number(raw);
-        // перерисовку таблицы не дёргаем, чтобы не терять фокус
-        pushQuiet();
-      });
-      td.appendChild(input);
+    tr.appendChild(el('td', 'who', p.name || 'Без имени'));
+    for (const c of state.contests) {
+      const v = MM.score(state, p.id, c.id);
+      const td = el('td', 'score-cell', v === null ? '—' : String(v));
+      if (v !== null && v < 0) td.classList.add('is-bad');
       tr.appendChild(td);
     }
-    tr.appendChild(el('td', 'total',
-      String(round ? MM.roundScore(state, p.id, round.id) : MM.total(state, p.id))));
+    tr.appendChild(el('td', 'total', String(MM.total(state, p.id))));
   }
 
-  if (!people.length) {
+  if (!state.participants.length) {
     const tr = table.insertRow();
     const td = el('td', null, 'Сначала добавьте участников');
-    td.colSpan = contests.length + 2;
+    td.colSpan = state.contests.length + 2;
     tr.appendChild(td);
   }
 }
+
+$('#score-contest').addEventListener('change', renderScoreCards);
 
 // отправка без полной перерисовки (для полей ввода баллов)
 let quietTimer = null;
 function pushQuiet() {
   clearTimeout(quietTimer);
   quietTimer = setTimeout(async () => {
+    pending += 1;
     try {
       const res = await fetch('/api/state', {
         method: 'POST',
@@ -591,25 +742,196 @@ function pushQuiet() {
         body: JSON.stringify(state),
       });
       const data = await res.json();
-      if (data.rev) myRev = data.rev;
+      if (data.rev) myRev = Math.max(myRev, data.rev);
       renderTotalsOnly();
       renderReveal();
-    } catch { /* сеть отвалилась — состояние останется локальным до следующей правки */ }
+    } catch { /* сеть отвалилась — состояние останется локальным до следующей правки */ } finally {
+      pending -= 1;
+    }
   }, 250);
 }
 
+// Обновляем цифры в общем зачёте, не перерисовывая таблицу целиком:
+// так не прыгает фокус из поля ввода.
 function renderTotalsOnly() {
-  const round = MM.isTournament(state) ? currentRound() : null;
-  const people = round ? MM.roundMembers(state, round) : state.participants;
   const rows = $('#score-table').rows;
-  for (let i = 1; i <= people.length && i < rows.length; i += 1) {
-    const cell = rows[i].cells[rows[i].cells.length - 1];
-    if (!cell) continue;
-    cell.textContent = String(round
-      ? MM.roundScore(state, people[i - 1].id, round.id)
-      : MM.total(state, people[i - 1].id));
-  }
+  state.participants.forEach((p, i) => {
+    const row = rows[i + 1];
+    if (!row) return;
+    state.contests.forEach((c, j) => {
+      const cell = row.cells[j + 1];
+      if (!cell) return;
+      const v = MM.score(state, p.id, c.id);
+      cell.textContent = v === null ? '—' : String(v);
+      cell.classList.toggle('is-bad', v !== null && v < 0);
+    });
+    const last = row.cells[row.cells.length - 1];
+    if (last) last.textContent = String(MM.total(state, p.id));
+  });
 }
+
+// --- жеребьёвка ---
+// Разыгрывает пульт: экран только показывает результат барабаном.
+
+function drawState() {
+  state.draw = state.draw || { runId: 0, kind: 'groups', contestId: null, groups: [], order: [], finalists: [], calls: [] };
+  return state.draw;
+}
+
+function shuffled(list) {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// 10 человек делим на тройки: лишние расходятся по группам, чтобы
+// получилось 3+3+4, а не 3+3+3+1.
+function splitByThree(ids) {
+  const count = Math.max(1, Math.floor(ids.length / 3));
+  const groups = Array.from({ length: count }, () => []);
+  shuffled(ids).forEach((pid, i) => groups[i % count].push(pid));
+  return groups;
+}
+
+function playingIds() {
+  return state.participants.filter((p) => !p.hidden && !p.out).map((p) => p.id);
+}
+
+function drawContestId() {
+  const sel = $('#draw-contest');
+  return sel.value || (state.contests[0] ? state.contests[0].id : null);
+}
+
+function runDraw(kind) {
+  const ids = playingIds();
+  if (ids.length < 2) { alert('Сначала добавьте участников.'); return; }
+  const dr = drawState();
+  dr.kind = kind;
+  dr.contestId = drawContestId();
+  dr.runId = (dr.runId || 0) + 1;
+  if (kind === 'groups') {
+    dr.groups = splitByThree(ids);
+    dr.order = [];
+  } else {
+    dr.order = shuffled(ids);
+    dr.groups = [];
+  }
+  state.display.mode = 'draw';
+  push();
+}
+
+function finalistIds() {
+  return [$('#final-a').value, $('#final-b').value].filter(Boolean);
+}
+
+function callToFinalist(which) {
+  const dr = drawState();
+  const finalists = finalistIds();
+  if (finalists.length < 2) { alert('Сначала выберите двух финалистов.'); return; }
+  const finalist = finalists[which];
+  if ((dr.calls || []).some((c) => c.finalist === finalist)) {
+    if (!confirm('К этому финалисту уже выходил участник. Вызвать ещё одного?')) return;
+  }
+  const used = new Set((dr.calls || []).map((c) => c.guest));
+  const pool = playingIds().filter((pid) => !finalists.includes(pid) && !used.has(pid));
+  if (!pool.length) { alert('Свободных участников не осталось.'); return; }
+  dr.kind = 'final';
+  dr.finalists = finalists;
+  dr.calls = [...(dr.calls || []), { finalist, guest: pool[Math.floor(Math.random() * pool.length)] }];
+  dr.runId = (dr.runId || 0) + 1;
+  state.display.mode = 'draw';
+  push();
+}
+
+function renderDraw() {
+  const sel = $('#draw-contest');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  for (const c of state.contests) {
+    const o = el('option', null, c.name || 'Без названия');
+    o.value = c.id;
+    sel.appendChild(o);
+  }
+  if (prev && state.contests.some((c) => c.id === prev)) sel.value = prev;
+  else if (state.draw && state.draw.contestId) sel.value = state.draw.contestId;
+
+  for (const id of ['#final-a', '#final-b']) {
+    const box = $(id);
+    const was = box.value;
+    box.innerHTML = '';
+    const none = el('option', null, '— не выбран —');
+    none.value = '';
+    box.appendChild(none);
+    for (const p of state.participants) {
+      const o = el('option', null, p.name || 'Без имени');
+      o.value = p.id;
+      box.appendChild(o);
+    }
+    box.value = was;
+  }
+
+  const dr = state.draw || {};
+  const name = (pid) => {
+    const p = state.participants.find((x) => x.id === pid);
+    return p ? (p.name || 'Без имени') : '—';
+  };
+  const host = $('#draw-result');
+  host.innerHTML = '';
+  if (dr.kind === 'groups' && (dr.groups || []).length) {
+    dr.groups.forEach((g, i) => {
+      host.appendChild(el('div', 'draw-line', `Тройка ${i + 1}: ${g.map(name).join(', ')}`));
+    });
+  } else if (dr.kind === 'order' && (dr.order || []).length) {
+    dr.order.forEach((pid, i) => host.appendChild(el('div', 'draw-line', `${i + 1}. ${name(pid)}`)));
+  } else if (dr.kind === 'final' && (dr.calls || []).length) {
+    for (const call of dr.calls) {
+      host.appendChild(el('div', 'draw-line', `К ${name(call.finalist)} вышел ${name(call.guest)}`));
+    }
+  }
+
+  const contest = state.contests.find((c) => c.id === dr.contestId);
+  $('#draw-status').textContent = dr.runId
+    ? `Последняя жеребьёвка${contest ? ` для «${contest.name}»` : ''}. Чтобы переиграть, нажмите кнопку ещё раз.`
+    : 'Жеребьёвки ещё не было.';
+  const left = playingIds().filter((pid) => !finalistIds().includes(pid)
+    && !(dr.calls || []).some((c) => c.guest === pid)).length;
+  $('#final-status').textContent = finalistIds().length < 2
+    ? 'Выберите двух финалистов — они не будут выпадать в розыгрыше.'
+    : `Вызовов сделано: ${(dr.calls || []).length}. Свободных участников: ${left}.`;
+}
+
+$('#draw-groups').addEventListener('click', () => runDraw('groups'));
+$('#draw-order').addEventListener('click', () => runDraw('order'));
+$('#draw-show').addEventListener('click', () => {
+  state.display.mode = 'draw';
+  drawState().runId = (drawState().runId || 0) + 1; // крутим барабан заново
+  push();
+});
+$('#draw-contest').addEventListener('change', () => { drawState().contestId = drawContestId(); push(); });
+$('#final-a').addEventListener('change', renderDraw);
+$('#final-b').addEventListener('change', renderDraw);
+$('#final-top').addEventListener('click', () => {
+  const top = [...state.participants]
+    .filter((p) => !p.hidden)
+    .sort((a, b) => MM.total(state, b.id) - MM.total(state, a.id))
+    .slice(0, 2);
+  if (top.length < 2) { alert('Нужны хотя бы два участника с баллами.'); return; }
+  $('#final-a').value = top[0].id;
+  $('#final-b').value = top[1].id;
+  drawState().finalists = [top[0].id, top[1].id];
+  push();
+});
+$('#final-call-a').addEventListener('click', () => callToFinalist(0));
+$('#final-call-b').addEventListener('click', () => callToFinalist(1));
+$('#final-reset').addEventListener('click', () => {
+  const dr = drawState();
+  dr.calls = [];
+  dr.runId = (dr.runId || 0) + 1;
+  push();
+});
 
 // --- музыка заданий ---
 // Файлы лежат в папке public/music/tasks, программа читает её сама.
@@ -659,321 +981,6 @@ function musicSelect(contest) {
     push();
   });
   return sel;
-}
-
-// --- турнир ---
-// Участники сражаются группами, из каждой группы дальше проходят лучшие.
-function tour() {
-  state.tournament = state.tournament
-    || { on: false, groupSize: 3, advance: 2, rounds: [], currentRoundId: null };
-  return state.tournament;
-}
-
-function currentRound() {
-  const t = tour();
-  return t.rounds.find((r) => r.id === t.currentRoundId) || null;
-}
-
-const groupLabel = (size, i) => (size === 3 ? `Тройка ${i + 1}` : `Группа ${i + 1}`);
-
-// Сколько групп делать. В группе должно остаться больше людей, чем проходит
-// дальше, иначе тур ничего не решает: из двойки по двое проходят оба и турнир
-// крутится на месте. Когда так не получается — это уже финал, одна группа.
-function groupCountFor(n, size, advance) {
-  let count = Math.max(1, Math.ceil(n / size));
-  while (count > 1 && Math.floor(n / count) <= advance) count -= 1;
-  return count;
-}
-
-// Раскладываем как можно ровнее: восьмерых по трое — это 3 + 3 + 2.
-function splitIntoGroups(ids, size, advance) {
-  const count = groupCountFor(ids.length, size, advance);
-  const groups = Array.from({ length: count }, (_, i) => ({
-    id: uid('g'), name: count === 1 ? 'Финал' : groupLabel(size, i), members: [],
-  }));
-  ids.forEach((pid, i) => groups[i % count].members.push(pid));
-  return groups;
-}
-
-function roundName(index, groupCount) {
-  if (groupCount === 1) return 'Финал';
-  if (index === 0) return 'Отборочный тур';
-  return `Тур ${index + 1}`;
-}
-
-function makeRound(memberIds, index) {
-  const t = tour();
-  const groups = splitIntoGroups(memberIds, t.groupSize, t.advance);
-  const round = {
-    id: uid('r'),
-    name: roundName(index, groups.length),
-    groups,
-    advancing: [],
-    finished: false,
-  };
-  // у каждого тура свои конкурсы — заводим первый сразу
-  state.contests.push({ id: uid('c'), name: 'Испытание 1', roundId: round.id });
-  return round;
-}
-
-function shuffle(list) {
-  const out = list.slice();
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
-$('#tour-on').addEventListener('change', (e) => { tour().on = e.target.checked; push(); });
-$('#tour-size').addEventListener('change', (e) => {
-  tour().groupSize = Math.max(2, Math.min(8, Number(e.target.value) || 3));
-  push();
-});
-$('#tour-advance').addEventListener('change', (e) => {
-  tour().advance = Math.max(1, Math.min(7, Number(e.target.value) || 2));
-  push();
-});
-
-$('#tour-start').addEventListener('click', () => {
-  const t = tour();
-  const ids = state.participants.filter((p) => !p.hidden).map((p) => p.id);
-  if (ids.length < 2) return alert('Сначала внесите участников на вкладке «Участники».');
-  if (t.rounds.length && !confirm('Начать турнир заново? Текущие туры будут удалены.')) return;
-  for (const c of state.contests) if (c.roundId) delete c.roundId; // старые туры отвязываем
-  t.rounds = [makeRound(shuffle(ids), 0)];
-  t.currentRoundId = t.rounds[0].id;
-  t.on = true;
-  return push();
-});
-
-$('#tour-reshuffle').addEventListener('click', () => {
-  const round = currentRound();
-  if (!round) return alert('Сначала сформируйте тур.');
-  if (round.finished) return alert('Тур уже подведён — сначала вернитесь к вводу баллов.');
-  const ids = shuffle(round.groups.flatMap((g) => g.members));
-  const groups = splitIntoGroups(ids, tour().groupSize, tour().advance);
-  round.groups = groups.map((g, i) => ({ ...g, name: round.groups[i] ? round.groups[i].name : g.name }));
-  return push();
-});
-
-$('#tour-reset').addEventListener('click', () => {
-  if (!confirm('Сбросить турнир? Группы и туры удалятся, конкурсы и баллы останутся.')) return;
-  const t = tour();
-  for (const c of state.contests) if (c.roundId) delete c.roundId;
-  t.rounds = [];
-  t.currentRoundId = null;
-  t.on = false;
-  if (state.display.mode === 'groups') state.display.mode = 'standby';
-  push();
-});
-
-function finishRound() {
-  const round = currentRound();
-  if (!round) return;
-  // проходящих считаем до того, как пометим тур подведённым
-  round.advancing = round.groups.flatMap(
-    (g) => MM.groupStanding(state, round, g).filter((r) => r.advances).map((r) => r.p.id),
-  );
-  round.finished = true;
-  push();
-}
-
-function nextRound() {
-  const t = tour();
-  const round = currentRound();
-  if (!round || !round.finished) return;
-  const members = round.advancing.slice();
-  if (members.length < 2) {
-    return alert('Дальше проходит меньше двух человек — это уже победитель турнира.');
-  }
-  const next = makeRound(members, t.rounds.length);
-  t.rounds.push(next);
-  t.currentRoundId = next.id;
-  return push();
-}
-
-function renderTournament() {
-  const t = tour();
-  $('#tour-on').checked = !!t.on;
-  $('#tour-size').value = String(t.groupSize || 3);
-  $('#tour-advance').value = String(t.advance || 2);
-  $('#tour-setup').hidden = !t.on;
-
-  const current = $('#tour-current');
-  const history = $('#tour-history');
-  current.innerHTML = '';
-  history.innerHTML = '';
-  if (!t.on) return;
-
-  const live = state.participants.filter((p) => !p.hidden).length;
-  const groupsCount = groupCountFor(live, t.groupSize || 3, t.advance || 2);
-  $('#tour-hint').textContent = t.rounds.length
-    ? `Каждый тур живёт своими конкурсами — баллы прошлых туров на следующий не переносятся.`
-    : `${live} участников — получится ${groupsCount} групп, дальше пройдут ${groupsCount * (t.advance || 2)} человек.`;
-
-  const round = currentRound();
-  if (!round) return;
-
-  // --- шапка тура ---
-  const head = el('div', 'round-head');
-  const name = el('input');
-  name.type = 'text';
-  name.value = round.name;
-  name.addEventListener('change', () => { round.name = name.value.trim() || round.name; push(); });
-  const badge = el('div', `round-badge${round.finished ? ' done' : ''}`,
-    round.finished ? 'итоги подведены' : `тур ${t.rounds.indexOf(round) + 1} из ${t.rounds.length}`);
-  head.append(badge, name);
-  current.appendChild(head);
-
-  // --- конкурсы тура ---
-  const chips = el('div', 'round-contests');
-  chips.appendChild(el('span', 'hint', 'Конкурсы тура:'));
-  for (const c of MM.roundContests(state, round.id)) {
-    const chip = el('div', 'chip');
-    const input = el('input');
-    input.type = 'text';
-    input.value = c.name;
-    input.addEventListener('change', () => { c.name = input.value.trim() || c.name; push(); });
-    const del = el('button', 'btn small btn-danger', '×');
-    del.title = 'Удалить конкурс вместе с баллами';
-    del.addEventListener('click', () => {
-      if (!confirm(`Удалить конкурс «${c.name}» вместе с баллами?`)) return;
-      state.contests = state.contests.filter((x) => x.id !== c.id);
-      for (const pid of Object.keys(state.scores)) delete state.scores[pid][c.id];
-      push();
-    });
-    chip.append(input, del);
-    chips.appendChild(chip);
-  }
-  const addContest = el('button', 'btn small', '+ конкурс');
-  addContest.addEventListener('click', () => {
-    const n = MM.roundContests(state, round.id).length + 1;
-    state.contests.push({ id: uid('c'), name: `Испытание ${n}`, roundId: round.id });
-    push();
-  });
-  chips.appendChild(addContest);
-  current.appendChild(chips);
-
-  // --- группы ---
-  const groupsBox = el('div', 'groups');
-  for (const group of round.groups) {
-    const card = el('div', 'group-card');
-    const gname = el('input');
-    gname.type = 'text';
-    gname.value = group.name;
-    gname.addEventListener('change', () => { group.name = gname.value.trim() || group.name; push(); });
-    card.appendChild(gname);
-
-    for (const row of MM.groupStanding(state, round, group)) {
-      const line = el('div', `group-row${row.advances ? ' goes' : ''}`);
-      line.appendChild(el('div', 'place', String(row.place)));
-
-      if (row.p.photo) {
-        const img = el('img', 'pic');
-        img.src = row.p.photo;
-        line.appendChild(img);
-      } else {
-        line.appendChild(el('div', 'pic'));
-      }
-
-      const nm = el('div', 'nm', row.p.name || 'Без имени');
-      if (row.tie) {
-        nm.appendChild(el('div', 'tie', 'ничья на границе — решите, кто проходит'));
-      }
-      line.appendChild(nm);
-      line.appendChild(el('div', 'val', String(row.value)));
-
-      if (round.finished) {
-        const label = el('label', 'check');
-        const box = el('input');
-        box.type = 'checkbox';
-        box.checked = row.advances;
-        box.title = 'Проходит дальше';
-        box.addEventListener('change', () => {
-          const list = new Set(round.advancing);
-          if (box.checked) list.add(row.p.id);
-          else list.delete(row.p.id);
-          round.advancing = [...list];
-          push();
-        });
-        label.append(box, document.createTextNode(' дальше'));
-        line.appendChild(label);
-      } else {
-        const move = el('select');
-        move.title = 'Перевести в другую группу';
-        for (const g of round.groups) {
-          const o = el('option', null, g.name);
-          o.value = g.id;
-          if (g.id === group.id) o.selected = true;
-          move.appendChild(o);
-        }
-        move.addEventListener('change', () => {
-          const target = round.groups.find((g) => g.id === move.value);
-          if (!target || target.id === group.id) return;
-          group.members = group.members.filter((x) => x !== row.p.id);
-          target.members.push(row.p.id);
-          push();
-        });
-        line.appendChild(move);
-      }
-      card.appendChild(line);
-    }
-    groupsBox.appendChild(card);
-  }
-  current.appendChild(groupsBox);
-
-  // --- итоги ---
-  const done = el('div', 'round-done');
-  if (!round.finished) {
-    done.appendChild(el('p', 'hint',
-      `Внесите баллы на вкладке «Баллы» и подведите итоги — дальше пройдут по ${t.advance} из каждой группы.`));
-    const b = el('button', 'btn btn-gold big', 'Подвести итоги тура');
-    b.addEventListener('click', finishRound);
-    done.appendChild(b);
-  } else {
-    const names = round.advancing
-      .map((pid) => (state.participants.find((p) => p.id === pid) || {}).name)
-      .filter(Boolean);
-    done.appendChild(el('p', 'hint', names.length
-      ? `Дальше проходят (${names.length}): ${names.join(', ')}`
-      : 'Пока никто не отмечен — поставьте галочки «дальше».'));
-    const acts = el('div', 'reveal-actions');
-    const b = el('button', 'btn btn-gold big', names.length > 1 ? 'Сформировать следующий тур' : 'Это победитель');
-    b.addEventListener('click', () => {
-      if (names.length > 1) nextRound();
-      else alert('Отметьте галочками тех, кто идёт дальше.');
-    });
-    const back = el('button', 'btn', 'Вернуться к вводу баллов');
-    back.addEventListener('click', () => { round.finished = false; push(); });
-    acts.append(b, back);
-    done.appendChild(acts);
-  }
-  current.appendChild(done);
-
-  // --- прошедшие туры ---
-  const past = t.rounds.filter((r) => r.id !== round.id);
-  if (past.length) {
-    history.appendChild(el('h2', 'mt', 'Пройденные туры'));
-    for (const r of past) {
-      const line = el('div', 'history-round');
-      const who = (r.advancing || [])
-        .map((pid) => (state.participants.find((p) => p.id === pid) || {}).name)
-        .filter(Boolean);
-      line.appendChild(el('b', null, r.name));
-      line.appendChild(document.createTextNode(
-        ` — ${r.groups.length} групп, дальше прошли: ${who.join(', ') || '—'}`));
-      const open = el('button', 'btn small', 'Вернуться к нему');
-      open.style.marginLeft = '0.6rem';
-      open.addEventListener('click', () => {
-        if (!confirm(`Сделать «${r.name}» текущим туром?`)) return;
-        tour().currentRoundId = r.id;
-        push();
-      });
-      line.appendChild(open);
-      history.appendChild(line);
-    }
-  }
 }
 
 // --- библиотека шоу ---
@@ -1082,119 +1089,8 @@ function soundCfg() {
   state.display.sound = state.display.sound || { on: true, volume: 0.7, testId: 0 };
   state.display.sound.music = state.display.sound.music || { on: true, volume: 0.6 };
   state.display.sound.taskMusic = state.display.sound.taskMusic || { on: true, volume: 0.5, scan: 0 };
-  state.display.sound.voice = state.display.sound.voice || { on: true, volume: 1, name: '', style: 'anon' };
-  if (!state.display.sound.voice.style) state.display.sound.voice.style = 'anon';
   return state.display.sound;
 }
-
-// --- голос зеркала ---
-// Текст синтезирует сервер (системный голос), искажает его уже окно зеркала.
-let voiceInfo = { engine: null, ru: false, voices: [] };
-
-async function loadVoices() {
-  try {
-    const r = await fetch('/api/voice');
-    const data = await r.json();
-    if (data.ok) voiceInfo = data;
-  } catch { /* сервер ответит позже */ }
-}
-
-function voiceEngineText() {
-  if (!voiceInfo.engine) {
-    return 'Системный синтезатор не найден — зеркало прочитает текст голосом браузера.'
-      + ' Это тоже работает, но звучит скромнее.';
-  }
-  if (!voiceInfo.ru) {
-    return `Синтезатор найден (${voiceInfo.engine}), но русского голоса в системе нет:`
-      + ' установите его в настройках системы, иначе русский текст прочтётся с акцентом.';
-  }
-  if (!voiceInfo.male) {
-    return `Синтезатор: ${voiceInfo.engine}. Русский голос есть, но он женский —`
-      + ' для мужского поставьте в системе голос Юрий (Mac: Системные настройки → Универсальный'
-      + ' доступ → Устный контент → Управление голосами → русский) и выберите его ниже.'
-      + ' Улучшенные (Enhanced) варианты звучат заметно чище обычных.';
-  }
-  return `Синтезатор: ${voiceInfo.engine}, голос по умолчанию мужской — всё готово.`
-    + ' Если в списке есть вариант Enhanced или Premium, выберите его: он звучит чище.';
-}
-
-// Просим зеркало прочитать текст: сначала готовим wav, потом двигаем runId.
-async function speak(text) {
-  const clean = String(text || '').trim();
-  const sp = state.display.speech || { runId: 0 };
-  if (!clean) return;
-  let url = '';
-  try {
-    const r = await fetch('/api/voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: clean,
-        voice: soundCfg().voice.name || '',
-        style: soundCfg().voice.style || 'anon',
-      }),
-    });
-    const data = await r.json();
-    if (data.ok) url = data.url;
-  } catch { /* обойдёмся голосом браузера */ }
-  state.display.speech = { runId: (sp.runId || 0) + 1, text: clean, url };
-  push();
-}
-
-function taskSpeechText() {
-  const d = state.display;
-  if (d.mode === 'prophecy') return (d.prophecy && d.prophecy.text) || '';
-  const c = state.contests.find((x) => x.id === d.contestId);
-  if (!c) return '';
-  const name = (c.name || '').trim();
-  const desc = (c.description || '').trim();
-  return [name, desc].filter(Boolean).join('. ');
-}
-
-function renderVoice() {
-  const v = soundCfg().voice;
-  $('#voice-on').checked = v.on !== false;
-  $('#voice-volume').value = String(Math.round((v.volume ?? 1) * 100));
-  $('#voice-volume-value').textContent = `${Math.round((v.volume ?? 1) * 100)}%`;
-  $('#voice-engine').textContent = voiceEngineText();
-  $('#voice-style').value = v.style || 'anon';
-
-  const sel = $('#voice-name');
-  sel.innerHTML = '';
-  const auto = el('option', null, voiceInfo.voices.length ? 'Выбрать автоматически' : 'Голосов нет');
-  auto.value = '';
-  sel.appendChild(auto);
-  for (const item of voiceInfo.voices) {
-    const o = el('option', null, item.lang ? `${item.name} (${item.lang})` : item.name);
-    o.value = item.id;
-    if (item.id === v.name) o.selected = true;
-    sel.appendChild(o);
-  }
-
-  const now = $('#voice-now');
-  if (now) {
-    const text = taskSpeechText();
-    now.textContent = v.on === false ? 'Голос выключен в «Настройках».'
-      : text ? `Прочитает: «${text.length > 90 ? `${text.slice(0, 90)}…` : text}»`
-        : 'Нечего читать: выберите конкурс и впишите описание задания на вкладке «Конкурсы».';
-  }
-}
-
-$('#voice-on').addEventListener('change', (e) => { soundCfg().voice.on = e.target.checked; push(); });
-$('#voice-name').addEventListener('change', (e) => { soundCfg().voice.name = e.target.value; push(); });
-$('#voice-style').addEventListener('change', (e) => { soundCfg().voice.style = e.target.value; push(); });
-$('#voice-volume').addEventListener('input', (e) => {
-  soundCfg().voice.volume = Number(e.target.value) / 100;
-  $('#voice-volume-value').textContent = `${e.target.value}%`;
-  pushQuiet();
-});
-$('#voice-test').addEventListener('click', () => speak('Зеркало слышит тебя. Говори.'));
-$('#speak-task').addEventListener('click', () => speak(taskSpeechText()));
-$('#speak-stop').addEventListener('click', () => {
-  const sp = state.display.speech || { runId: 0 };
-  state.display.speech = { runId: (sp.runId || 0) + 1, text: '', url: '' };
-  push();
-});
 
 // --- предсказания ---
 function proph() {
@@ -1245,7 +1141,7 @@ $('#prophecy-default').addEventListener('click', async () => {
 
 $('#prophecy-reset').addEventListener('click', () => { proph().used = []; push(); });
 
-$('#prophecy-draw').addEventListener('click', async () => {
+$('#prophecy-draw').addEventListener('click', () => {
   const { list, fresh } = prophecyPool();
   if (!list.length) { alert('Список предсказаний пуст.'); return; }
   let pool = fresh;
@@ -1254,15 +1150,14 @@ $('#prophecy-draw').addEventListener('click', async () => {
   proph().used.push(text);
   state.display.mode = 'prophecy';
   state.display.prophecy = { text, who: $('#prophecy-who').value.trim() };
-  push(); // сначала текст на экране, голос — следом
-  await speak(text);
+  push();
 });
 
 $('#prophecy-again').addEventListener('click', () => {
   const cur = state.display.prophecy || {};
   if (!cur.text) { alert('Сначала вытяните предсказание.'); return; }
   state.display.mode = 'prophecy';
-  speak(cur.text);
+  push();
 });
 
 function renderSound() {
@@ -1377,9 +1272,8 @@ function render() {
   $('#set-title').value = state.settings.title || '';
   $('#set-subtitle').value = state.settings.subtitle || '';
   renderSound();
-  renderVoice();
+  renderDraw();
   renderProphecy();
-  renderTournament();
   const title = state.showName || 'шоу не выбрано';
   $('#brand-show').textContent = title;
   $('#current-show').textContent = title;
@@ -1392,14 +1286,15 @@ function connect() {
     conn.textContent = 'связь есть';
     conn.className = 'conn ok';
     const incoming = JSON.parse(ev.data);
-    if (incoming.rev === myRev) return; // наше же изменение вернулось — не трогаем поля
+    // Своё же эхо и всё, что старше наших отправок, пропускаем: иначе быстрые
+    // нажатия подряд затирались бы ответом на предыдущее нажатие.
+    if (pending > 0 || incoming.rev <= myRev) return;
     const firstTime = !state;
     state = incoming;
     render();
     if (firstTime) {
       renderShows();
       loadTaskTracks().then(render);
-      loadVoices().then(renderVoice);
     }
   });
   es.onerror = () => {

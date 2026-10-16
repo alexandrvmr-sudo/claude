@@ -134,6 +134,18 @@
       <button class="btn btn-gold" type="submit">Добавить</button>
     </form>
     <p class="hint">Фото можно добавить позже, оно само обрежется в круг. Можно перетащить файл на карточку участника.</p>
+
+    <h2 class="mt">Фото пачкой</h2>
+    <p class="hint">Перетащите сюда все аватарки разом — программа разложит их по именам файлов.
+      Или сложите файлы в папку <code>фото участников</code> рядом с программой и нажмите «Взять фото из папки».</p>
+    <div id="photo-drop" class="photo-drop">Перетащите сюда файлы с фотографиями</div>
+    <div class="reveal-actions">
+      <button id="photo-folder" class="btn">Взять фото из папки</button>
+      <button id="photo-apply" class="btn btn-gold" hidden>Применить</button>
+      <button id="photo-clear" class="btn" hidden>Отмена</button>
+    </div>
+    <p class="hint" id="photo-status">—</p>
+    <div id="photo-match" class="photo-match"></div>
     <div class="people" id="people"></div>
   </section>
 

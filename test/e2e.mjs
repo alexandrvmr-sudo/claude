@@ -387,6 +387,45 @@ await clickOn(3, 'Сброс');
 st = await (await fetch(`${APP}/api/state`)).json();
 ok('сброс убирает баллы', st.scores.t3[blitzId] === null, String(st.scores.t3[blitzId]));
 
+// фото пачкой: перетаскивание и разбор по именам файлов
+await evaluate(`document.querySelector('.tab[data-tab="people"]').click()`);
+await sleep(300);
+const dropped = await evaluate(`(async () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 40; canvas.height = 40;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#2ba79f'; ctx.fillRect(0, 0, 40, 40);
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+  const names = ['Анна Зорина.png', 'борис.png', 'IMG_7781.png'];
+  const dt = new DataTransfer();
+  for (const name of names) dt.items.add(new File([blob], name, { type: 'image/png' }));
+  const zone = document.querySelector('#photo-drop');
+  zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 300));
+  return [...document.querySelectorAll('#photo-match .photo-row')]
+    .map((r) => r.querySelector('.file').textContent + '=' + r.querySelector('select').selectedOptions[0].textContent)
+    .join(' | ');
+})()`);
+ok('перетащенные файлы разбираются по именам',
+  dropped.includes('Анна Зорина.png=Анна') && dropped.includes('борис.png=Борис')
+  && dropped.includes('IMG_7781.png=— пропустить —'),
+  String(dropped));
+
+await evaluate(`document.querySelector('#photo-apply').click()`);
+await sleep(2500);
+st = await (await fetch(`${APP}/api/state`)).json();
+const withPhoto = st.participants.filter((p) => p.photo);
+ok('фотографии встают участникам',
+  withPhoto.length === 2 && withPhoto.every((p) => /^\/photos\//.test(p.photo))
+  && new Set(withPhoto.map((p) => p.photo)).size === 2,
+  `с фото ${withPhoto.length}`);
+ok('неразобранный файл никому не достался',
+  !st.participants.some((p) => p.name === 'Вера' && p.photo));
+
+// та же раскладка, но из папки рядом с программой
+const avatars = await (await fetch(`${APP}/api/avatars`)).json();
+ok('папка с фото читается', avatars.ok && Array.isArray(avatars.files), String(avatars.files && avatars.files.length));
+
 // штрафные задания «Стаканов»
 await evaluate(`document.querySelector('.tab[data-tab="contests"]').click()`);
 await sleep(300);

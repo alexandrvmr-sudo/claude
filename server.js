@@ -160,6 +160,9 @@ function defaultState() {
 export async function startServer({ dataDir, port, host } = {}) {
   const DATA_DIR = dataDir || process.env.MIRROR_DATA || path.join(ROOT, 'data');
   const PHOTO_DIR = path.join(DATA_DIR, 'photos');
+  // Сюда ведущий кладёт аватарки пачкой: программа разберёт их по именам
+  const AVATAR_DIR = process.env.MIRROR_AVATARS || path.join(ROOT, 'фото участников');
+  const IMAGE_RE = /\.(jpe?g|png|webp|heic|gif)$/i;
   const SHOWS_DIR = path.join(DATA_DIR, 'shows');
   const STATE_FILE = path.join(DATA_DIR, 'state.json');
   // 0 — это «любой свободный порт», поэтому проверяем именно на отсутствие значения
@@ -559,6 +562,34 @@ export async function startServer({ dataDir, port, host } = {}) {
         const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
         const name = `${id('p')}.${ext}`;
         await fsp.writeFile(path.join(PHOTO_DIR, name), Buffer.from(m[2], 'base64'));
+        return sendJson(res, 200, { ok: true, url: `/photos/${name}` });
+      } catch (e) {
+        return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+      }
+    }
+
+    // Фотографии пачкой: что лежит в папке «фото участников» рядом с программой
+    if (pathname === '/api/avatars' && req.method === 'GET') {
+      const files = [];
+      try {
+        for (const entry of await fsp.readdir(AVATAR_DIR, { withFileTypes: true })) {
+          if (entry.isFile() && IMAGE_RE.test(entry.name)) files.push(entry.name);
+        }
+      } catch { /* папки нет — значит, фото не положили */ }
+      files.sort((a, b) => a.localeCompare(b, 'ru'));
+      return sendJson(res, 200, { ok: true, dir: AVATAR_DIR, files });
+    }
+
+    // Взять конкретный файл из папки и положить его в фото участников
+    if (pathname === '/api/avatars/import' && req.method === 'POST') {
+      try {
+        const { file } = JSON.parse(await readBody(req) || '{}');
+        const source = safeJoin(AVATAR_DIR, String(file || ''));
+        if (!source || !IMAGE_RE.test(source)) throw new Error('Это не картинка');
+        const data = await fsp.readFile(source);
+        const ext = path.extname(source).toLowerCase().replace('.', '').replace('jpeg', 'jpg');
+        const name = `${id('p')}.${ext}`;
+        await fsp.writeFile(path.join(PHOTO_DIR, name), data);
         return sendJson(res, 200, { ok: true, url: `/photos/${name}` });
       } catch (e) {
         return sendJson(res, 400, { ok: false, error: String(e.message || e) });

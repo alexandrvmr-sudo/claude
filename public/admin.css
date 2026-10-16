@@ -243,3 +243,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .quiz-q { font-size: 1.25rem; line-height: 1.4; }
 .quiz-a { margin-top: 0.5rem; color: var(--dim); font-size: 1.05rem; }
 .quiz-a.is-open { color: var(--gold); font-weight: 500; }
+
+/* загрузка фото пачкой */
+.photo-drop {
+  margin: 0.8rem 0 0.6rem; padding: 1.4rem 1rem; max-width: 52rem;
+  border: 1px dashed var(--line); border-radius: 0.6rem;
+  background: var(--card-2); color: var(--dim); text-align: center;
+}
+.photo-drop.drag { border-color: var(--accent); color: var(--text); }
+.photo-match { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.6rem; max-width: 52rem; }
+.photo-row {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 0.45rem; padding: 0.4rem 0.6rem;
+}
+.photo-row img { width: 2.4rem; height: 2.4rem; border-radius: 50%; object-fit: cover; }
+.photo-row .file { flex: 1 1 14rem; color: var(--dim); font-size: 0.9rem; word-break: break-all; }
+.photo-row select { max-width: 14rem; }

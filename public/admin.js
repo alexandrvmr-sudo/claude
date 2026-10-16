@@ -324,6 +324,174 @@ async function uploadPhoto(file) {
   return data.url;
 }
 
+// --- фотографии пачкой ---
+// Файлы приходят либо перетаскиванием, либо из папки «фото участников».
+// Имя файла сопоставляем с именем участника: «Настя.jpg» -> Настя.
+
+function plainName(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\.[a-z0-9]+$/i, '') // расширение
+    .replace(/[_\-.()\[\]]+/g, ' ')
+    .replace(/\d+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Чем выше балл, тем увереннее совпадение. 0 — не похоже.
+function nameScore(fileName, person) {
+  const file = plainName(fileName);
+  const full = plainName(person.name || '');
+  if (!file || !full) return 0;
+  const first = full.split(' ')[0];
+  if (file === full) return 100;
+  if (file === first) return 80;
+  if (file.includes(full)) return 70;
+  if (full.includes(file) && file.length >= 3) return 60;
+  if (file.split(' ').includes(first)) return 50;
+  if (first.length >= 4 && file.includes(first)) return 40;
+  return 0;
+}
+
+// Жадно раздаём файлы участникам: сначала самые уверенные пары.
+function matchPhotos(fileNames, people) {
+  const pairs = [];
+  for (const file of fileNames) {
+    for (const person of people) {
+      const score = nameScore(file, person);
+      if (score) pairs.push({ file, pid: person.id, score });
+    }
+  }
+  pairs.sort((a, b) => b.score - a.score);
+  const takenFiles = new Set();
+  const takenPeople = new Set();
+  const result = new Map();
+  for (const pair of pairs) {
+    if (takenFiles.has(pair.file) || takenPeople.has(pair.pid)) continue;
+    takenFiles.add(pair.file);
+    takenPeople.add(pair.pid);
+    result.set(pair.file, pair.pid);
+  }
+  return result;
+}
+
+let photoQueue = []; // [{ name, file | fromFolder, pid }]
+
+function renderPhotoQueue() {
+  const host = $('#photo-match');
+  host.innerHTML = '';
+  const apply = $('#photo-apply');
+  const clear = $('#photo-clear');
+  apply.hidden = !photoQueue.length;
+  clear.hidden = !photoQueue.length;
+  if (!photoQueue.length) return;
+
+  for (const item of photoQueue) {
+    const row = el('div', 'photo-row');
+    if (item.file) {
+      const img = el('img');
+      img.src = URL.createObjectURL(item.file);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      row.appendChild(img);
+    }
+    row.appendChild(el('div', 'file', item.name));
+    const sel = el('select');
+    const none = el('option', null, '— пропустить —');
+    none.value = '';
+    sel.appendChild(none);
+    for (const person of state.participants) {
+      const o = el('option', null, person.name || 'Без имени');
+      o.value = person.id;
+      if (person.id === item.pid) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => { item.pid = sel.value; });
+    row.appendChild(sel);
+    host.appendChild(row);
+  }
+  const matched = photoQueue.filter((i) => i.pid).length;
+  $('#photo-status').textContent = `Файлов: ${photoQueue.length}, узнано по имени: ${matched}.`
+    + ' Проверьте списки и нажмите «Применить».';
+}
+
+function queueFiles(files) {
+  const images = [...files].filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|gif)$/i.test(f.name));
+  if (!images.length) { $('#photo-status').textContent = 'Картинок среди файлов не нашлось.'; return; }
+  const guess = matchPhotos(images.map((f) => f.name), state.participants);
+  photoQueue = images.map((f) => ({ name: f.name, file: f, pid: guess.get(f.name) || '' }));
+  renderPhotoQueue();
+}
+
+// Файл, брошенный мимо зоны, иначе открылся бы вместо пульта
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+
+const drop = $('#photo-drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('drag');
+  queueFiles(e.dataTransfer.files);
+});
+
+$('#photo-folder').addEventListener('click', async () => {
+  try {
+    const data = await (await fetch('/api/avatars')).json();
+    if (!data.ok) throw new Error(data.error || 'Папка недоступна');
+    if (!data.files.length) {
+      $('#photo-status').textContent = 'В папке «фото участников» пока пусто — скопируйте туда аватарки.';
+      photoQueue = [];
+      renderPhotoQueue();
+      return;
+    }
+    const guess = matchPhotos(data.files, state.participants);
+    photoQueue = data.files.map((name) => ({ name, fromFolder: true, pid: guess.get(name) || '' }));
+    renderPhotoQueue();
+  } catch (err) {
+    $('#photo-status').textContent = `Не вышло прочитать папку: ${err.message}`;
+  }
+});
+
+$('#photo-clear').addEventListener('click', () => {
+  photoQueue = [];
+  $('#photo-status').textContent = '—';
+  renderPhotoQueue();
+});
+
+$('#photo-apply').addEventListener('click', async () => {
+  const work = photoQueue.filter((item) => item.pid);
+  if (!work.length) { alert('Не выбрано ни одного участника.'); return; }
+  $('#photo-apply').disabled = true;
+  let done = 0;
+  const failed = [];
+  for (const item of work) {
+    $('#photo-status').textContent = `Загружаю ${done + 1} из ${work.length}…`;
+    try {
+      const url = item.fromFolder
+        ? (await (await fetch('/api/avatars/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: item.name }),
+        })).json()).url
+        : await uploadPhoto(item.file);
+      if (!url) throw new Error('сервер не вернул файл');
+      const person = state.participants.find((p) => p.id === item.pid);
+      if (person) { person.photo = url; done += 1; }
+    } catch (err) {
+      failed.push(`${item.name}: ${err.message}`);
+    }
+  }
+  $('#photo-apply').disabled = false;
+  photoQueue = [];
+  renderPhotoQueue();
+  push();
+  $('#photo-status').textContent = failed.length
+    ? `Загружено ${done}. Не вышло: ${failed.join('; ')}`
+    : `Готово: фотографий расставлено — ${done}.`;
+});
+
 // Уменьшаем фото в браузере: на экране портрет небольшой, зато файл лёгкий.
 function shrink(file, max) {
   return new Promise((resolve, reject) => {
@@ -1439,6 +1607,7 @@ function render() {
   $('#set-subtitle').value = state.settings.subtitle || '';
   renderSound();
   renderDraw();
+  renderPhotoQueue();
   renderProphecy();
   const title = state.showName || 'шоу не выбрано';
   $('#brand-show').textContent = title;
